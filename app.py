@@ -57,8 +57,8 @@ if uploaded_file:
             # 5️⃣ Разбор flight на дату, номер рейса и маршрут
             def split_flight_info(flight_str):
                 try:
-                    parts = flight_str.split(" - ")
-                    flight_date = pd.to_datetime(parts[0], format="%Y.%m.%d", errors='coerce')  # безопасно
+                    parts = str(flight_str).split(" - ")
+                    flight_date = pd.to_datetime(parts[0], format="%Y.%m.%d", errors='coerce')
                     flight_number = parts[1] if len(parts) > 1 else None
                     route = parts[2] if len(parts) > 2 else None
                     return pd.Series([flight_date, flight_number, route])
@@ -70,10 +70,9 @@ if uploaded_file:
             # Удаляем строки, где дата рейса не распознана
             df = df[df['flight_date'].notna()]
 
-            # 6️⃣ Определяем сегодняшнюю дату и дни до вылета
+            # 6️⃣ Определяем сегодняшнюю дату и безопасно вычисляем дни до вылета
             today = datetime.today().date()
-            df['days_to_flight'] = (df['flight_date'].dt.date - today).dt.days
-            df.loc[df['days_to_flight'] < 1, 'days_to_flight'] = 1  # чтобы не делить на ноль
+            df['days_to_flight'] = df['flight_date'].apply(lambda x: max((x.date() - today).days, 1))
 
             # 7️⃣ Расчёт темпа продаж
             def calc_sales_speed(row):
