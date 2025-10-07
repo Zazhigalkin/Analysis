@@ -46,9 +46,9 @@ if uploaded_file:
         # Классификация с допуском ±5
         def classify(row):
             if -5 <= row['diff_vs_plan'] <= 5:
-                return "🟡 По плану"
+                return "🟢 По плану"
             elif row['diff_vs_plan'] > 5:
-                return "🟢 Опережаем"
+                return "🔵 Опережаем"
             else:
                 return "🔴 Отстаём"
 
