@@ -58,14 +58,17 @@ if uploaded_file:
             def split_flight_info(flight_str):
                 try:
                     parts = flight_str.split(" - ")
-                    flight_date = pd.to_datetime(parts[0], format="%Y.%m.%d", errors='coerce')
+                    flight_date = pd.to_datetime(parts[0], format="%Y.%m.%d", errors='coerce')  # безопасно
                     flight_number = parts[1] if len(parts) > 1 else None
                     route = parts[2] if len(parts) > 2 else None
                     return pd.Series([flight_date, flight_number, route])
                 except:
-                    return pd.Series([None, None, None])
+                    return pd.Series([pd.NaT, None, None])
 
             df[['flight_date', 'flight_number', 'route']] = df['flight'].apply(split_flight_info)
+
+            # Удаляем строки, где дата рейса не распознана
+            df = df[df['flight_date'].notna()]
 
             # 6️⃣ Определяем сегодняшнюю дату и дни до вылета
             today = datetime.today().date()
