@@ -13,17 +13,17 @@ uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
 if uploaded_file:
     # 1️⃣ Чтение Excel
     df = pd.read_excel(uploaded_file, engine="openpyxl")
-    
-    # 2️⃣ Переименовываем колонки в удобные
+
+    # 2️⃣ Переименование колонок для удобства
     df = df.rename(columns={
-        'flt_date_num': 'flight',
-        'today': 'today',
-        'yesterday': 'yesterday',
-        'd_2_3': 'd_2_3',
-        'd_4_6': 'd_4_6',
-        'd_7_13': 'd_7_13',
-        'd_14_plus': 'd_14_plus',
-        'total_seats': 'total_seats'
+        'flt_date&num': 'flight',
+        'Ind SS today': 'today',
+        'Ind SS yesterday': 'yesterday',
+        'Ind SS 2-3 days before': 'd_2_3',
+        'Ind SS 4-6 days before': 'd_4_6',
+        'Ind SS 7-13 days before': 'd_7_13',
+        'Ind SS last 14 days': 'd_14_plus',
+        'Cap': 'total_seats'
     })
 
     required_columns = ['flight','today','yesterday','d_2_3','d_4_6','d_7_13','d_14_plus','total_seats']
