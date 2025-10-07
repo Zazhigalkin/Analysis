@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 
-
 st.set_page_config(page_title="Sales Speed Analyzer", layout="wide")
 st.title("📈 Анализ скорости продаж по рейсам")
 
@@ -23,18 +22,6 @@ if uploaded_file:
         'Ind SS 7-13 days before': 'd_7_13',
         'Ind SS last 14 days': 'd_14_plus'
     })
-
-    if uploaded_file:
-    # Показать предпросмотр данных для отладки
-    raw_df = pd.read_excel(uploaded_file)
-    st.write("Предпросмотр данных:", raw_df.head(3))
-    
-    # Позволить пользователю выбрать строку с заголовками
-    header_row = st.number_input("Номер строки с заголовками", min_value=0, value=2)
-    df = pd.read_excel(uploaded_file, header=header_row)
-    
-    # Показать доступные колонки для сопоставления
-    st.write("Доступные колонки:", list(df.columns))
 
     required_columns = ['flight', 'today', 'yesterday', 'd_2_3', 'd_4_6', 'd_7_13', 'd_14_plus']
     if not all(col in df.columns for col in required_columns):
