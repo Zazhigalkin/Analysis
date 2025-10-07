@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import io
 
-st.title("📈 Анализ темпа продаж по рейсам с учётом даты сегодня")
+st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
 
 uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
 
