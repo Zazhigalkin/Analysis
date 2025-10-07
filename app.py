@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+from datetime import datetime
 
 st.set_page_config(page_title="Sales Speed Analyzer", layout="wide")
 st.title("📈 Анализ скорости продаж по рейсам")
@@ -12,7 +13,7 @@ if uploaded_file:
     # 1️⃣ Чтение без заголовков для поиска реальной строки с колонками
     df_temp = pd.read_excel(uploaded_file, engine="openpyxl", header=None)
     
-    # Находим первую строку, где больше половины значений не пустые
+    # Находим первую строку с заголовками
     header_row_idx = None
     for i, row in df_temp.iterrows():
         if row.notna().sum() >= len(row)/2:
@@ -36,13 +37,14 @@ if uploaded_file:
 
         # 4️⃣ Словарь соответствий
         rename_dict = {
-            'flt_date_num': 'flight',
+            'flt_date_num': 'flight',  # колонка с датой, номером рейса и маршрутом
             'ind_ss_today': 'today',
             'ind_ss_yesterday': 'yesterday',
             'ind_ss_2_3_days_before': 'd_2_3',
             'ind_ss_4_6_days_before': 'd_4_6',
             'ind_ss_7_13_days_before': 'd_7_13',
-            'ind_ss_last_14_days': 'd_14_plus'
+            'ind_ss_last_14_days': 'd_14_plus',
+            'total_seats': 'total_seats'  # если есть
         }
 
         df = df.rename(columns=rename_dict)
@@ -52,7 +54,25 @@ if uploaded_file:
             st.error("⚠️ Файл не соответствует нужной структуре. Проверь названия колонок.")
             st.write("Найденные колонки:", df.columns.tolist())
         else:
-            # 5️⃣ Расчёт темпа продаж
+            # 5️⃣ Разбор flight на дату, номер рейса и маршрут
+            def split_flight_info(flight_str):
+                try:
+                    parts = flight_str.split(" - ")
+                    flight_date = pd.to_datetime(parts[0], format="%Y.%m.%d", errors='coerce')
+                    flight_number = parts[1] if len(parts) > 1 else None
+                    route = parts[2] if len(parts) > 2 else None
+                    return pd.Series([flight_date, flight_number, route])
+                except:
+                    return pd.Series([None, None, None])
+
+            df[['flight_date', 'flight_number', 'route']] = df['flight'].apply(split_flight_info)
+
+            # 6️⃣ Определяем сегодняшнюю дату и дни до вылета
+            today = datetime.today().date()
+            df['days_to_flight'] = (df['flight_date'].dt.date - today).dt.days
+            df.loc[df['days_to_flight'] < 1, 'days_to_flight'] = 1  # чтобы не делить на ноль
+
+            # 7️⃣ Расчёт темпа продаж
             def calc_sales_speed(row):
                 early = row['d_14_plus'] + row['d_7_13']
                 recent = row['d_4_6'] + row['d_2_3'] + row['yesterday'] + row['today']
@@ -60,7 +80,7 @@ if uploaded_file:
 
             df['sales_speed_ratio'] = df.apply(calc_sales_speed, axis=1)
 
-            # 6️⃣ Классификация скорости
+            # 8️⃣ Классификация скорости
             def classify_speed(ratio):
                 if ratio > 1.2:
                     return "🟢 Быстро"
@@ -71,12 +91,12 @@ if uploaded_file:
 
             df['sales_speed_status'] = df['sales_speed_ratio'].apply(classify_speed)
 
-            # 7️⃣ Определение аномалий по дням
+            # 9️⃣ Определение аномалий
             def attention_flag(row):
                 flags = []
                 notes = []
 
-                # Проверка резкого роста
+                # резкий рост
                 if row['today'] > max(row['d_14_plus'], 1) * 1.5:
                     flags.append('Сегодня')
                     notes.append("Сегодня продажи резко выше исторических значений.")
@@ -87,7 +107,7 @@ if uploaded_file:
                     flags.append('2-3 дня назад')
                     notes.append("Продажи 2-3 дня назад резко выше исторических значений.")
 
-                # Проверка резкого падения
+                # резкое падение
                 if row['today'] < max(row['d_14_plus'], 1) * 0.5:
                     flags.append('Сегодня')
                     notes.append("Сегодня продажи резко ниже исторических значений.")
@@ -102,19 +122,37 @@ if uploaded_file:
 
             df[['attention_flag', 'notes']] = df.apply(attention_flag, axis=1, result_type='expand')
 
-            # 8️⃣ Итоговый результат
-            result = df[['flight', 'sales_speed_ratio', 'sales_speed_status', 'attention_flag', 'notes']]
+            # 🔟 Сравнение с планом продаж
+            if 'total_seats' in df.columns:
+                df['avg_daily_plan'] = df['total_seats'] / df['days_to_flight']
+                df['today_vs_plan'] = df['today'] - df['avg_daily_plan']
+                def daily_status(row):
+                    if row['today_vs_plan'] > 0:
+                        return "🟢 Опережаем"
+                    elif row['today_vs_plan'] < 0:
+                        return "🔴 Отстаем"
+                    else:
+                        return "🟡 В графике"
+                df['daily_sales_comparison'] = df.apply(daily_status, axis=1)
+            else:
+                df['daily_sales_comparison'] = "Нет данных о total_seats"
+
+            # 1️⃣1️⃣ Итоговый результат
+            result = df[['flight', 'flight_date', 'flight_number', 'route', 'days_to_flight',
+                         'sales_speed_ratio', 'sales_speed_status', 'daily_sales_comparison',
+                         'attention_flag', 'notes']]
 
             st.subheader("📊 Результаты")
             st.dataframe(result, use_container_width=True)
 
-            # 9️⃣ Отдельно показываем рейсы, требующие внимания
+            # 1️⃣2️⃣ Рейсы, требующие внимания
             attention_df = result[result['attention_flag'].notna()]
             if not attention_df.empty:
                 st.subheader("⚠️ Рейсы, требующие внимания")
-                st.dataframe(attention_df[['flight', 'attention_flag', 'notes']], use_container_width=True)
+                st.dataframe(attention_df[['flight', 'flight_date', 'flight_number', 'route',
+                                           'attention_flag', 'notes']], use_container_width=True)
 
-            # 🔟 Скачивание Excel с результатами
+            # 1️⃣3️⃣ Скачать Excel
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 result.to_excel(writer, index=False, sheet_name='Sales Speed')
