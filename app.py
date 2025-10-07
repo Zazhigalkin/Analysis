@@ -9,10 +9,9 @@ st.title("📈 Анализ скорости продаж по рейсам")
 uploaded_file = st.file_uploader("Загрузи Excel файл (структура как Test sales.xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    # Попробуем найти строку с заголовками
+    # 1️⃣ Чтение без заголовков для поиска реальной строки с колонками
     df_temp = pd.read_excel(uploaded_file, engine="openpyxl", header=None)
     
-    # Находим первую строку, где больше половины значений не пустые
     header_row_idx = None
     for i, row in df_temp.iterrows():
         if row.notna().sum() >= len(row)/2:
@@ -22,7 +21,7 @@ if uploaded_file:
     if header_row_idx is None:
         st.error("Не удалось найти заголовки в файле Excel")
     else:
-        # Считаем Excel, указывая найденный header
+        # 2️⃣ Чтение с найденными заголовками
         df = pd.read_excel(uploaded_file, engine="openpyxl", header=header_row_idx)
         
         # Очистка названий колонок
@@ -52,7 +51,7 @@ if uploaded_file:
             st.error("⚠️ Файл не соответствует нужной структуре. Проверь названия колонок.")
             st.write("Найденные колонки:", df.columns.tolist())
         else:
-            # Расчёт темпа продаж
+            # 3️⃣ Расчёт темпа продаж
             def calc_sales_speed(row):
                 early = row['d_14_plus'] + row['d_7_13']
                 recent = row['d_4_6'] + row['d_2_3'] + row['yesterday'] + row['today']
@@ -60,7 +59,7 @@ if uploaded_file:
 
             df['sales_speed_ratio'] = df.apply(calc_sales_speed, axis=1)
 
-            # Классификация
+            # 4️⃣ Классификация
             def classify_speed(ratio):
                 if ratio > 1.2:
                     return "🟢 Быстро"
@@ -71,12 +70,32 @@ if uploaded_file:
 
             df['sales_speed_status'] = df['sales_speed_ratio'].apply(classify_speed)
 
-            result = df[['flight', 'sales_speed_ratio', 'sales_speed_status']]
+            # 5️⃣ Проверка на внимание (резкие изменения по дням)
+            def attention_flag(row):
+                flags = []
+                if row['today'] > row['d_14_plus'] * 1.5:  # Сегодня резко больше чем раньше
+                    flags.append('Сегодня')
+                if row['yesterday'] > row['d_14_plus'] * 1.5:
+                    flags.append('Вчера')
+                if row['d_2_3'] > row['d_14_plus'] * 1.5:
+                    flags.append('2-3 дня назад')
+                return ', '.join(flags) if flags else None
+
+            df['attention_flag'] = df.apply(attention_flag, axis=1)
+
+            # 6️⃣ Итоговый результат
+            result = df[['flight', 'sales_speed_ratio', 'sales_speed_status', 'attention_flag']]
 
             st.subheader("📊 Результаты")
             st.dataframe(result, use_container_width=True)
 
-            # Скачать Excel
+            # 7️⃣ Отдельно показываем рейсы, на которые нужно обратить внимание
+            attention_df = result[result['attention_flag'].notna()]
+            if not attention_df.empty:
+                st.subheader("⚠️ Рейсы, требующие внимания")
+                st.dataframe(attention_df[['flight', 'attention_flag']], use_container_width=True)
+
+            # 8️⃣ Скачать Excel с результатами
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 result.to_excel(writer, index=False, sheet_name='Sales Speed')
