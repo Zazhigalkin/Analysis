@@ -43,9 +43,11 @@ if uploaded_file:
         # Разница вчерашних продаж и плана на день
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # Классификация: 🔵 перепродажа, 🟢 по плану, 🔴 отстаём
+        # Классификация: 🔵 перепродажа, 🟢 по плану, 🔴 отстаём, игнорируем, если daily_needed < 4
         def classify(row):
-            if row['diff_vs_plan'] > 5:
+            if row['daily_needed'] < 4:
+                return "⚪ Мелкий рейс"
+            elif row['diff_vs_plan'] > 5:
                 return "🔵 Перепродажа"
             elif -5 <= row['diff_vs_plan'] <= 5:
                 return "🟢 По плану"
@@ -61,7 +63,7 @@ if uploaded_file:
         st.subheader("📊 Результаты анализа темпа продаж")
         st.dataframe(result, use_container_width=True)
 
-        # Вывод рейсов, на которые нужно обратить внимание
+        # Вывод рейсов, на которые нужно обратить внимание (исключая мелкие рейсы)
         attention_df = result[result['status'].isin(["🔴 Отстаём", "🔵 Перепродажа"])]
         if not attention_df.empty:
             st.subheader("⚠️ Рейсы, требующие внимания")
