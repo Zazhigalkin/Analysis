@@ -8,7 +8,6 @@ st.title("📈 Темп продаж по рейсам с учётом даты 
 uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
 
 if uploaded_file:
-    # Чтение Excel
     df = pd.read_excel(uploaded_file, engine="openpyxl")
 
     # Переименование колонок
@@ -41,17 +40,17 @@ if uploaded_file:
         # Необходимый дневной темп
         df['daily_needed'] = df['remaining_seats'] / df['days_to_flight']
 
-        # Сравнение продаж вчера с планом на день
+        # Разница вчерашних продаж и плана на день
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # Классификация
+        # Классификация с допуском ±5
         def classify(row):
-            if row['diff_vs_plan'] > 0:
+            if -5 <= row['diff_vs_plan'] <= 5:
+                return "🟡 По плану"
+            elif row['diff_vs_plan'] > 5:
                 return "🟢 Опережаем"
-            elif row['diff_vs_plan'] < 0:
-                return "🔴 Отстаём"
             else:
-                return "🟡 В графике"
+                return "🔴 Отстаём"
 
         df['status'] = df.apply(classify, axis=1)
 
