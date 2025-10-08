@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import io
 import numpy as np
 
-st.set_page_config(page_title="Анализ темпов продаж", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Анализ темпов продаж by Kirill", page_icon="📈", layout="wide")
 
 st.title("📈 Анализ темпа продаж по рейсам")
 
