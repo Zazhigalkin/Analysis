@@ -116,13 +116,17 @@ if uploaded_file:
         df['load_factor_num'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
         # Load Factor уже в процентах (98.7), так что оставляем как есть
 
-        # Улучшенная классификация с проверкой Load Factor
+        # Улучшенная классификация с проверкой Load Factor и small daily_needed
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
             diff = row['diff_vs_plan']
             load_factor = row['load_factor_num']  # Уже в процентах (98.7)
             sold_yesterday = row['sold_yesterday']
+            
+            # Проверка: если daily_needed < 3 - считаем по плану (маленький дневной план)
+            if daily_needed < 3:
+                return "🟢 По плану"
             
             # Проверка: если вчера не было продаж, но Load Factor > 90% - считаем по плану
             if sold_yesterday == 0 and load_factor > 90:
@@ -291,6 +295,7 @@ if uploaded_file:
                 st.metric("Средний дневной темп", f"{filtered_result['daily_needed'].mean():.1f}")
                 st.metric("Всего осталось мест", f"{filtered_result['remaining_seats'].sum():.0f}")
                 st.metric("Средний Load Factor", f"{filtered_result['load_factor_num'].mean():.1f}%")
+                st.metric("Рейсов с daily_needed < 3", f"{len(filtered_result[filtered_result['daily_needed'] < 3])}")
                 
             with col2:
                 st.metric("Медианное отклонение от плана", f"{filtered_result['diff_vs_plan'].median():.1f}")
@@ -326,7 +331,8 @@ if uploaded_file:
                     'Далёкие рейсы',
                     'Общий остаток мест',
                     'Средний Load Factor',
-                    'Рейсов с LF > 90%'
+                    'Рейсов с LF > 90%',
+                    'Рейсов с daily_needed < 3'
                 ],
                 'Значение': [
                     len(result),
@@ -336,7 +342,8 @@ if uploaded_file:
                     len(result[result['status'] == '⚪ До рейса ещё далеко']),
                     result['remaining_seats'].sum(),
                     f"{result['load_factor_num'].mean():.1f}%",
-                    len(result[result['load_factor_num'] > 90])
+                    len(result[result['load_factor_num'] > 90]),
+                    len(result[result['daily_needed'] < 3])
                 ]
             })
             summary.to_excel(writer, index=False, sheet_name='Аналитика')
