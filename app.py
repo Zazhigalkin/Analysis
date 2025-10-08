@@ -4,10 +4,11 @@ from datetime import datetime, timedelta
 import io
 import numpy as np
 
-st.set_page_config(page_title="Анализ темпов продаж by Kirill", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Анализ темпов продаж", page_icon="📈", layout="wide")
 
-st.title("📈 Анализ темпа продаж по рейсам")
+st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
 
+# Добавляем описание для пользователя
 with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И ЛОГИКЕ АНАЛИЗА"):
     st.markdown("""
     ### 📋 Требуемые колонки в файле:
@@ -41,6 +42,7 @@ with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И
     - **diff_vs_plan** = sold_yesterday - daily_needed (отклонение от плана)
     """)
 
+# Инструкция по формату файла
 with st.expander("📁 ФОРМАТ ЗАГРУЖАЕМОГО EXCEL-ФАЙЛА"):
     st.markdown("""
     ### Обязательные колонки в Excel файле:
@@ -83,10 +85,12 @@ if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, engine="openpyxl")
         
+        # Валидация данных
         if df.empty:
             st.error("❌ Файл пустой")
             st.stop()
             
+        # Переименование колонок
         df = df.rename(columns={
             'flt_date&num': 'flight',
             'Ind SS': 'sold_total',
@@ -106,7 +110,8 @@ if uploaded_file:
         st.write("📊 Первые 5 строк исходных данных:")
         st.dataframe(df.head())
 
-
+        # Обработка данных
+        # Разделение flight на дату, номер рейса и маршрут
         flight_split = df['flight'].str.split(" - ", n=2, expand=True)
         
         if flight_split.shape[1] < 3:
@@ -115,11 +120,11 @@ if uploaded_file:
             
         df[['flight_date_str','flight_number','route']] = flight_split.iloc[:, :3]
         
-
+        # Преобразование даты
         original_count = len(df)
         df['flight_date'] = pd.to_datetime(df['flight_date_str'], format="%Y.%m.%d", errors='coerce')
         
-
+        # Проверка корректности дат
         invalid_dates = df['flight_date'].isna().sum()
         if invalid_dates > 0:
             st.warning(f"⚠️ Найдено {invalid_dates} строк с некорректной датой. Они будут исключены из анализа.")
@@ -131,13 +136,15 @@ if uploaded_file:
             
         st.success(f"✅ Обработано {len(df)} из {original_count} записей")
 
+        # Сегодняшняя дата
         today = datetime.today().date()
         
-
+        # Дни до вылета - исправленная версия
         df['days_to_flight'] = df['flight_date'].apply(
             lambda x: max((x.date() - today).days, 1)
         )
 
+        # Проверка на рейсы, которые уже вылетели
         past_flights = df[df['flight_date'].dt.date < today]
         if not past_flights.empty:
             st.warning(f"⚠️ Найдено {len(past_flights)} рейсов, которые уже вылетели. Они будут исключены.")
@@ -147,21 +154,28 @@ if uploaded_file:
             st.error("❌ После исключения вылетевших рейсов не осталось записей")
             st.stop()
 
+        # Основные расчеты
         df['remaining_seats'] = df['total_seats'] - df['sold_total']
         
+        # Защита от деления на ноль и NaN
         df['daily_needed'] = np.where(
             (df['days_to_flight'] > 0) & (df['remaining_seats'] > 0),
             df['remaining_seats'] / df['days_to_flight'],
             0
         )
         
+        # Обработка NaN в sold_yesterday
         df['sold_yesterday'] = df['sold_yesterday'].fillna(0)
         
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
+        # ПРАВИЛЬНОЕ преобразование load_factor - убираем только символы, но не делим на 100
         df['load_factor_num'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
+        # Обработка NaN в load_factor
         df['load_factor_num'] = df['load_factor_num'].fillna(0)
+        # Load Factor уже в процентах (98.7), так что оставляем как есть
 
+        # Улучшенная классификация с проверкой Load Factor и small daily_needed
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
@@ -169,28 +183,34 @@ if uploaded_file:
             load_factor = row['load_factor_num']  # Уже в процентах (98.7)
             sold_yesterday = row['sold_yesterday']
             
+            # Проверка: если daily_needed < 3 - считаем по плану (маленький дневной план)
             if daily_needed < 3:
                 return "🟢 По плану"
             
+            # Проверка: если вчера не было продаж, но Load Factor > 90% - считаем по плану
             if sold_yesterday == 0 and load_factor > 90:
                 return "🟢 По плану"
             
+            # Долгосрочные рейсы с малым спросом
             if days_to_flight > 30 and daily_needed < 4:
                 if sold_yesterday > daily_needed:
-                    return "🔵 Перепродажа"  
+                    return "🔵 Перепродажа"  # Если продали больше плана - перепродажа
                 else:
-                    return "⚪ До рейса ещё далеко" 
+                    return "⚪ До рейса ещё далеко"  # Если продали меньше или по плану - далекий рейс
             
-
+            # Значительное превышение плана
             elif diff > max(5, daily_needed * 0.3):  # 5 или 30% от дневного плана
                 return "🔵 Перепродажа"
+            # Небольшое отклонение от плана
             elif abs(diff) <= max(5, daily_needed * 0.3):
                 return "🟢 По плану"
+            # Значительное недовыполнение
             else:
                 return "🔴 Отстаём"
 
         df['status'] = df.apply(classify, axis=1)
 
+        # Итоговая таблица с правильным округлением
         result_columns = [
             'flight', 'flight_date', 'flight_number', 'route', 
             'total_seats', 'sold_total', 'sold_yesterday', 
@@ -200,6 +220,7 @@ if uploaded_file:
         
         result = df[result_columns].copy()
         
+        # Округление до 1 знака после запятой и обработка NaN
         result['daily_needed'] = result['daily_needed'].fillna(0).round(1)
         result['diff_vs_plan'] = result['diff_vs_plan'].fillna(0).round(1)
         result['sold_yesterday'] = result['sold_yesterday'].fillna(0).round(1)
@@ -207,6 +228,7 @@ if uploaded_file:
         result['sold_total'] = result['sold_total'].fillna(0)
         result['remaining_seats'] = result['remaining_seats'].fillna(0)
 
+        # Визуализация
         col1, col2 = st.columns([3, 1])
         
         with col1:
@@ -216,6 +238,7 @@ if uploaded_file:
             status_counts = result['status'].value_counts()
             st.metric("Всего рейсов", len(result))
 
+        # Статистика по статусам
         status_colors = {
             "🔵 Перепродажа": "#1f77b4",
             "🟢 По плану": "#2ca02c", 
@@ -232,6 +255,7 @@ if uploaded_file:
                 unsafe_allow_html=True
             )
 
+        # Фильтрация данных
         st.subheader("🔍 Фильтры")
         col1, col2, col3, col4 = st.columns(4)
         
@@ -265,6 +289,7 @@ if uploaded_file:
                 min_load_factor, max_load_factor, (min_load_factor, max_load_factor)
             )
 
+        # Применение фильтров
         filtered_result = result[
             (result['status'].isin(selected_status)) &
             (result['days_to_flight'].between(days_range[0], days_range[1])) &
@@ -272,6 +297,7 @@ if uploaded_file:
             (result['load_factor_num'].between(load_factor_range[0], load_factor_range[1]))
         ]
 
+        # Функция для подсветки строк
         def highlight_rows(row):
             if row['status'] == '🔴 Отстаём':
                 return ['background-color: #ffcccc'] * len(row)
@@ -282,6 +308,7 @@ if uploaded_file:
             else:
                 return [''] * len(row)
 
+        # Форматирование числовых колонок для отображения
         display_columns = [
             'flight', 'flight_date', 'flight_number', 'route', 
             'total_seats', 'sold_total', 'sold_yesterday', 
@@ -291,6 +318,7 @@ if uploaded_file:
         
         formatted_result = filtered_result[display_columns].copy()
         
+        # Форматируем отображение чисел (убираем NaN)
         display_df = formatted_result.copy()
         display_df['flight_date'] = display_df['flight_date'].dt.strftime('%Y-%m-%d')  # Только дата без времени
         display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
@@ -298,6 +326,7 @@ if uploaded_file:
         display_df['sold_yesterday'] = display_df['sold_yesterday'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
         display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
         
+        # Переименовываем колонки для отображения
         display_df = display_df.rename(columns={'load_factor_num': 'load_factor'})
         
         st.dataframe(
@@ -306,27 +335,73 @@ if uploaded_file:
             height=400
         )
 
+        # Рейсы, требующие внимания
         attention_df = filtered_result[filtered_result['status'].isin(["🔴 Отстаём", "🔵 Перепродажа"])]
         if not attention_df.empty:
             st.subheader("⚠️ Рейсы, требующие внимания")
+            
+            # Инициализация session_state для хранения состояния чекбоксов
+            if 'checked_flights' not in st.session_state:
+                st.session_state.checked_flights = {}
             
             for status in ["🔴 Отстаём", "🔵 Перепродажа"]:
                 status_df = attention_df[attention_df['status'] == status]
                 if not status_df.empty:
                     with st.expander(f"{status} ({len(status_df)} рейсов)"):
-                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor_num']
-                        display_data = status_df[display_cols].copy()
-                        display_data['flight_date'] = display_data['flight_date'].dt.strftime('%Y-%m-%d')
-                        display_data['daily_needed'] = display_data['daily_needed'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-                        display_data['diff_vs_plan'] = display_data['diff_vs_plan'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-                        display_data['sold_yesterday'] = display_data['sold_yesterday'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-                        display_data['load_factor_num'] = display_data['load_factor_num'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
-                        display_data = display_data.rename(columns={'load_factor_num': 'load_factor'})
-                        st.dataframe(
-                            display_data,
-                            use_container_width=True
+                        st.info("✅ Отмечайте рейсы, которые уже проверили")
+                        
+                        for idx, row in status_df.iterrows():
+                            flight_key = row['flight']
+                            
+                            # Инициализация состояния для этого рейса, если его еще нет
+                            if flight_key not in st.session_state.checked_flights:
+                                st.session_state.checked_flights[flight_key] = False
+                            
+                            col1, col2 = st.columns([1, 10])
+                            
+                            with col1:
+                                # Чекбокс для отметки проверки
+                                is_checked = st.checkbox(
+                                    "",
+                                    value=st.session_state.checked_flights[flight_key],
+                                    key=f"check_{flight_key}",
+                                    help="Отметьте, если рейс уже проверен"
+                                )
+                                # Обновляем состояние в session_state
+                                st.session_state.checked_flights[flight_key] = is_checked
+                            
+                            with col2:
+                                # Отображаем информацию о рейсе
+                                if is_checked:
+                                    st.markdown(f"~~{row['flight']}~~ ✅")
+                                else:
+                                    st.markdown(f"**{row['flight']}**")
+                                
+                                st.markdown(f"""
+                                - **Маршрут:** {row['route']}
+                                - **Дата вылета:** {row['flight_date'].strftime('%Y-%m-%d')}
+                                - **Продано вчера:** {row['sold_yesterday']:.1f} 
+                                - **Необходимый темп:** {row['daily_needed']:.1f}
+                                - **Отклонение:** {row['diff_vs_plan']:.1f}
+                                - **Load Factor:** {row['load_factor_num']:.1f}%
+                                - **Дней до вылета:** {row['days_to_flight']}
+                                """)
+                            
+                            st.markdown("---")
+                        
+                        # Статистика по проверенным рейсам
+                        checked_count = sum(1 for key in st.session_state.checked_flights 
+                                          if st.session_state.checked_flights[key] and 
+                                          key in status_df['flight'].values)
+                        total_count = len(status_df)
+                        
+                        st.metric(
+                            f"Проверено рейсов ({status})", 
+                            f"{checked_count} из {total_count}",
+                            delta=f"{checked_count/total_count*100:.1f}%" if total_count > 0 else "0%"
                         )
 
+        # Скачать Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             # Для Excel форматируем числа правильно и убираем NaN
