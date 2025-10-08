@@ -9,36 +9,19 @@ st.set_page_config(page_title="Анализ темпов продаж", page_ico
 st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
 
 # Добавляем описание для пользователя
-with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И ЛОГИКЕ АНАЛИЗА"):
+with st.expander("ℹ️ Инструкция по использованию"):
     st.markdown("""
-    ### 📋 Требуемые колонки в файле:
+    **Требуемые колонки в файле:**
     - `flt_date&num` - Дата и номер рейса (формат: "2024.01.15 - SU123 - MOSCOW-SOCHI")
     - `Ind SS` - Всего продано билетов
     - `Ind SS yesterday` - Продано вчера
     - `Cap` - Вместимость самолёта
-    - `LF` - Load Factor (загрузка рейса)
-
-    ### 🎯 ЛОГИКА КЛАССИФИКАЦИИ СТАТУСОВ (в порядке приоритета):
-
-    1. **🟢 По плану** - если выполняется ЛЮБОЕ из условий:
-       - `daily_needed < 3` (очень маленький дневной план)
-       - `sold_yesterday = 0` и `load_factor > 90%` (рейс почти полный, новых продаж не требуется)
-       - Отклонение от плана в пределах ±5 билетов или ±30% от дневного плана
-
-    2. **⚪ До рейса ещё далеко** - если:
-       - `days_to_flight > 30` и `daily_needed < 4` (рейс через >30 дней с малым дневным планом)
-
-    3. **🔵 Перепродажа** - если:
-       - Значительно превысили дневной план (`diff_vs_plan > 5` или `>30%` от дневного плана)
-
-    4. **🔴 Отстаём** - если:
-       - Значительно недовыполнили дневной план
-
-    ### 📊 РАСЧЕТНЫЕ ПОКАЗАТЕЛИ:
-    - **days_to_flight** = дни до вылета (минимум 1 день)
-    - **remaining_seats** = всего мест - продано
-    - **daily_needed** = remaining_seats / days_to_flight (необходимый дневной темп)
-    - **diff_vs_plan** = sold_yesterday - daily_needed (отклонение от плана)
+    
+    **Статусы рейсов:**
+    - 🔵 Перепродажа - значительно превысили дневной план
+    - 🟢 По плану - продажи в пределах нормы
+    - 🔴 Отстаём - недовыполнение плана
+    - ⚪ До рейса ещё далеко - рейс через >30 дней с малым дневным планом
     """)
 
 uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
@@ -57,11 +40,10 @@ if uploaded_file:
             'flt_date&num': 'flight',
             'Ind SS': 'sold_total',
             'Ind SS yesterday': 'sold_yesterday',
-            'Cap': 'total_seats',
-            'LF': 'load_factor'
+            'Cap': 'total_seats'
         })
 
-        required_columns = ['flight','sold_total','sold_yesterday','total_seats','load_factor']
+        required_columns = ['flight','sold_total','sold_yesterday','total_seats']
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
@@ -69,7 +51,7 @@ if uploaded_file:
             st.write("📋 Найденные колонки:", df.columns.tolist())
             st.stop()
 
-        st.write("📊 Первые 5 строк исходных данных:")
+        st.write("📊 Первые 5 строк данных:")
         st.dataframe(df.head())
 
         # Обработка данных
@@ -119,39 +101,20 @@ if uploaded_file:
         # Основные расчеты
         df['remaining_seats'] = df['total_seats'] - df['sold_total']
         
-        # Защита от деления на ноль и NaN
+        # Защита от деления на ноль
         df['daily_needed'] = np.where(
-            (df['days_to_flight'] > 0) & (df['remaining_seats'] > 0),
+            df['days_to_flight'] > 0,
             df['remaining_seats'] / df['days_to_flight'],
             0
         )
         
-        # Обработка NaN в sold_yesterday
-        df['sold_yesterday'] = df['sold_yesterday'].fillna(0)
-        
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # ПРАВИЛЬНОЕ преобразование load_factor - убираем только символы, но не делим на 100
-        df['load_factor_num'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
-        # Обработка NaN в load_factor
-        df['load_factor_num'] = df['load_factor_num'].fillna(0)
-        # Load Factor уже в процентах (98.7), так что оставляем как есть
-
-        # Улучшенная классификация с проверкой Load Factor и small daily_needed
+        # Улучшенная классификация
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
             diff = row['diff_vs_plan']
-            load_factor = row['load_factor_num']  # Уже в процентах (98.7)
-            sold_yesterday = row['sold_yesterday']
-            
-            # Проверка: если daily_needed < 3 - считаем по плану (маленький дневной план)
-            if daily_needed < 3:
-                return "🟢 По плану"
-            
-            # Проверка: если вчера не было продаж, но Load Factor > 90% - считаем по плану
-            if sold_yesterday == 0 and load_factor > 90:
-                return "🟢 По плану"
             
             # Долгосрочные рейсы с малым спросом
             if days_to_flight > 30 and daily_needed < 4:
@@ -168,23 +131,17 @@ if uploaded_file:
 
         df['status'] = df.apply(classify, axis=1)
 
-        # Итоговая таблица с правильным округлением
+        # Итоговая таблица
         result_columns = [
             'flight', 'flight_date', 'flight_number', 'route', 
             'total_seats', 'sold_total', 'sold_yesterday', 
             'remaining_seats', 'days_to_flight', 'daily_needed', 
-            'diff_vs_plan', 'load_factor_num', 'status'
+            'diff_vs_plan', 'status'
         ]
         
         result = df[result_columns].copy()
-        
-        # Округление до 1 знака после запятой и обработка NaN
-        result['daily_needed'] = result['daily_needed'].fillna(0).round(1)
-        result['diff_vs_plan'] = result['diff_vs_plan'].fillna(0).round(1)
-        result['sold_yesterday'] = result['sold_yesterday'].fillna(0).round(1)
-        result['load_factor_num'] = result['load_factor_num'].fillna(0).round(1)
-        result['sold_total'] = result['sold_total'].fillna(0)
-        result['remaining_seats'] = result['remaining_seats'].fillna(0)
+        result['daily_needed'] = result['daily_needed'].round(2)
+        result['diff_vs_plan'] = result['diff_vs_plan'].round(2)
 
         # Визуализация
         col1, col2 = st.columns([3, 1])
@@ -215,7 +172,7 @@ if uploaded_file:
 
         # Фильтрация данных
         st.subheader("🔍 Фильтры")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             selected_status = st.multiselect(
@@ -238,21 +195,12 @@ if uploaded_file:
                 options=result['route'].unique(),
                 default=result['route'].unique()
             )
-            
-        with col4:
-            min_load_factor = float(result['load_factor_num'].min())
-            max_load_factor = float(result['load_factor_num'].max())
-            load_factor_range = st.slider(
-                "Load Factor (%)",
-                min_load_factor, max_load_factor, (min_load_factor, max_load_factor)
-            )
 
         # Применение фильтров
         filtered_result = result[
             (result['status'].isin(selected_status)) &
             (result['days_to_flight'].between(days_range[0], days_range[1])) &
-            (result['route'].isin(routes)) &
-            (result['load_factor_num'].between(load_factor_range[0], load_factor_range[1]))
+            (result['route'].isin(routes))
         ]
 
         # Функция для подсветки строк
@@ -266,29 +214,8 @@ if uploaded_file:
             else:
                 return [''] * len(row)
 
-        # Форматирование числовых колонок для отображения
-        display_columns = [
-            'flight', 'flight_date', 'flight_number', 'route', 
-            'total_seats', 'sold_total', 'sold_yesterday', 
-            'remaining_seats', 'days_to_flight', 'daily_needed', 
-            'diff_vs_plan', 'load_factor_num', 'status'
-        ]
-        
-        formatted_result = filtered_result[display_columns].copy()
-        
-        # Форматируем отображение чисел (убираем NaN)
-        display_df = formatted_result.copy()
-        display_df['flight_date'] = display_df['flight_date'].dt.strftime('%Y-%m-%d')  # Только дата без времени
-        display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-        display_df['diff_vs_plan'] = display_df['diff_vs_plan'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-        display_df['sold_yesterday'] = display_df['sold_yesterday'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-        display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
-        
-        # Переименовываем колонки для отображения
-        display_df = display_df.rename(columns={'load_factor_num': 'load_factor'})
-        
         st.dataframe(
-            display_df.style.apply(highlight_rows, axis=1),
+            filtered_result.style.apply(highlight_rows, axis=1),
             use_container_width=True,
             height=400
         )
@@ -302,16 +229,9 @@ if uploaded_file:
                 status_df = attention_df[attention_df['status'] == status]
                 if not status_df.empty:
                     with st.expander(f"{status} ({len(status_df)} рейсов)"):
-                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor_num']
-                        display_data = status_df[display_cols].copy()
-                        display_data['flight_date'] = display_data['flight_date'].dt.strftime('%Y-%m-%d')
-                        display_data['daily_needed'] = display_data['daily_needed'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-                        display_data['diff_vs_plan'] = display_data['diff_vs_plan'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-                        display_data['sold_yesterday'] = display_data['sold_yesterday'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
-                        display_data['load_factor_num'] = display_data['load_factor_num'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
-                        display_data = display_data.rename(columns={'load_factor_num': 'load_factor'})
+                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight']
                         st.dataframe(
-                            display_data,
+                            status_df[display_cols],
                             use_container_width=True
                         )
 
@@ -322,58 +242,31 @@ if uploaded_file:
             with col1:
                 st.metric("Средний дневной темп", f"{filtered_result['daily_needed'].mean():.1f}")
                 st.metric("Всего осталось мест", f"{filtered_result['remaining_seats'].sum():.0f}")
-                st.metric("Средний Load Factor", f"{filtered_result['load_factor_num'].mean():.1f}%")
-                st.metric("Рейсов с daily_needed < 3", f"{len(filtered_result[filtered_result['daily_needed'] < 3])}")
                 
             with col2:
                 st.metric("Медианное отклонение от плана", f"{filtered_result['diff_vs_plan'].median():.1f}")
                 st.metric("Средние дни до вылета", f"{filtered_result['days_to_flight'].mean():.0f}")
-                st.metric("Рейсов с LF > 90%", f"{len(filtered_result[filtered_result['load_factor_num'] > 90])}")
                 
             with col3:
                 st.metric("Рейсов отстаёт от плана", 
                          len(filtered_result[filtered_result['status'] == '🔴 Отстаём']))
                 st.metric("Рейсов с перепродажей", 
                          len(filtered_result[filtered_result['status'] == '🔵 Перепродажа']))
-                st.metric("Рейсов по плану", 
-                         len(filtered_result[filtered_result['status'] == '🟢 По плану']))
 
         # Скачать Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Для Excel форматируем числа правильно и убираем NaN
-            result_to_export = result.copy()
-            result_to_export['flight_date'] = result_to_export['flight_date'].dt.strftime('%Y-%m-%d')
-            result_to_export['daily_needed'] = result_to_export['daily_needed'].fillna(0).round(1)
-            result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].fillna(0).round(1)
-            result_to_export['sold_yesterday'] = result_to_export['sold_yesterday'].fillna(0).round(1)
-            result_to_export['load_factor'] = result_to_export['load_factor_num'].fillna(0).round(1)
-            result_to_export = result_to_export.drop('load_factor_num', axis=1)
-            result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
-            
+            result.to_excel(writer, index=False, sheet_name='Sales_Speed')
             # Добавляем лист с аналитикой
             summary = pd.DataFrame({
-                'Метрика': [
-                    'Всего рейсов', 
-                    'Отстают', 
-                    'Перепродажа', 
-                    'По плану', 
-                    'Далёкие рейсы',
-                    'Общий остаток мест',
-                    'Средний Load Factor',
-                    'Рейсов с LF > 90%',
-                    'Рейсов с daily_needed < 3'
-                ],
+                'Метрика': ['Всего рейсов', 'Отстают', 'Перепродажа', 'По плану', 'Далёкие рейсы', 'Общий остаток мест'],
                 'Значение': [
                     len(result),
                     len(result[result['status'] == '🔴 Отстаём']),
                     len(result[result['status'] == '🔵 Перепродажа']),
                     len(result[result['status'] == '🟢 По плану']),
                     len(result[result['status'] == '⚪ До рейса ещё далеко']),
-                    result['remaining_seats'].sum(),
-                    f"{result['load_factor_num'].mean():.1f}%",
-                    len(result[result['load_factor_num'] > 90]),
-                    len(result[result['daily_needed'] < 3])
+                    result['remaining_seats'].sum()
                 ]
             })
             summary.to_excel(writer, index=False, sheet_name='Аналитика')
