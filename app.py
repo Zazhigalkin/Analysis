@@ -112,15 +112,16 @@ if uploaded_file:
         
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # Преобразование load_factor из процентов в число (98,7% -> 98.7)
-        df['load_factor'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
+        # Преобразование load_factor из процентов в число (98,7% -> 98.7) и оставляем в %
+        df['load_factor_num'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
+        df['load_factor'] = df['load_factor_num']  # Оставляем как число для вычислений, но отображаем с %
 
         # Улучшенная классификация с проверкой Load Factor
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
             diff = row['diff_vs_plan']
-            load_factor = row['load_factor']
+            load_factor = row['load_factor_num']
             sold_yesterday = row['sold_yesterday']
             
             # Проверка: если вчера не было продаж, но Load Factor > 90% - считаем по плану
@@ -153,10 +154,9 @@ if uploaded_file:
         result = df[result_columns].copy()
         
         # Округление до 1 знака после запятой
-        numeric_columns = ['daily_needed', 'diff_vs_plan', 'load_factor']
-        for col in numeric_columns:
-            if col in result.columns:
-                result[col] = result[col].round(1)
+        result['daily_needed'] = result['daily_needed'].round(1)
+        result['diff_vs_plan'] = result['diff_vs_plan'].round(1)
+        result['load_factor'] = result['load_factor'].round(1)
 
         # Визуализация
         col1, col2 = st.columns([3, 1])
@@ -248,8 +248,12 @@ if uploaded_file:
         
         formatted_result = filtered_result[display_columns].copy()
         
+        # Форматируем отображение Load Factor с символом %
+        display_df = formatted_result.copy()
+        display_df['load_factor'] = display_df['load_factor'].apply(lambda x: f"{x}%")
+        
         st.dataframe(
-            formatted_result.style.apply(highlight_rows, axis=1),
+            display_df.style.apply(highlight_rows, axis=1),
             use_container_width=True,
             height=400
         )
@@ -264,8 +268,10 @@ if uploaded_file:
                 if not status_df.empty:
                     with st.expander(f"{status} ({len(status_df)} рейсов)"):
                         display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor']
+                        display_data = status_df[display_cols].copy()
+                        display_data['load_factor'] = display_data['load_factor'].apply(lambda x: f"{x}%")
                         st.dataframe(
-                            status_df[display_cols],
+                            display_data,
                             use_container_width=True
                         )
 
@@ -294,7 +300,11 @@ if uploaded_file:
         # Скачать Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            result.to_excel(writer, index=False, sheet_name='Sales_Speed')
+            # Для Excel оставляем load_factor как число
+            result_to_export = result.copy()
+            result_to_export['load_factor'] = result_to_export['load_factor'].apply(lambda x: f"{x}%")
+            result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
+            
             # Добавляем лист с аналитикой
             summary = pd.DataFrame({
                 'Метрика': [
