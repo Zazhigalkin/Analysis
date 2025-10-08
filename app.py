@@ -160,6 +160,7 @@ if uploaded_file:
         # Округление до 1 знака после запятой для daily_needed и diff_vs_plan
         result['daily_needed'] = result['daily_needed'].round(1)
         result['diff_vs_plan'] = result['diff_vs_plan'].round(1)
+        result['sold_yesterday'] = result['sold_yesterday'].round(1)  # Округляем sold_yesterday до 1 знака
         result['load_factor_num'] = result['load_factor_num'].round(1)
 
         # Визуализация
@@ -254,9 +255,11 @@ if uploaded_file:
         
         # Форматируем отображение чисел
         display_df = formatted_result.copy()
+        display_df['flight_date'] = display_df['flight_date'].dt.strftime('%Y-%m-%d')  # Только дата без времени
         display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}")
         display_df['diff_vs_plan'] = display_df['diff_vs_plan'].apply(lambda x: f"{x:.1f}")
-        display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.1f}%")  # Теперь будет 68.0% вместо 0.68%
+        display_df['sold_yesterday'] = display_df['sold_yesterday'].apply(lambda x: f"{x:.1f}")  # sold_yesterday с 1 знаком
+        display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.1f}%")  # Правильный формат: 30.0% вместо 0.3%
         
         # Переименовываем колонки для отображения
         display_df = display_df.rename(columns={'load_factor_num': 'load_factor'})
@@ -278,8 +281,10 @@ if uploaded_file:
                     with st.expander(f"{status} ({len(status_df)} рейсов)"):
                         display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor_num']
                         display_data = status_df[display_cols].copy()
+                        display_data['flight_date'] = display_data['flight_date'].dt.strftime('%Y-%m-%d')  # Только дата без времени
                         display_data['daily_needed'] = display_data['daily_needed'].apply(lambda x: f"{x:.1f}")
                         display_data['diff_vs_plan'] = display_data['diff_vs_plan'].apply(lambda x: f"{x:.1f}")
+                        display_data['sold_yesterday'] = display_data['sold_yesterday'].apply(lambda x: f"{x:.1f}")  # sold_yesterday с 1 знаком
                         display_data['load_factor_num'] = display_data['load_factor_num'].apply(lambda x: f"{x:.1f}%")
                         display_data = display_data.rename(columns={'load_factor_num': 'load_factor'})
                         st.dataframe(
@@ -315,8 +320,10 @@ if uploaded_file:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             # Для Excel форматируем числа правильно
             result_to_export = result.copy()
+            result_to_export['flight_date'] = result_to_export['flight_date'].dt.strftime('%Y-%m-%d')  # Только дата в Excel
             result_to_export['daily_needed'] = result_to_export['daily_needed'].round(1)
             result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].round(1)
+            result_to_export['sold_yesterday'] = result_to_export['sold_yesterday'].round(1)
             result_to_export['load_factor'] = result_to_export['load_factor_num'].round(1)
             result_to_export = result_to_export.drop('load_factor_num', axis=1)
             result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
