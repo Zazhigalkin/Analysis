@@ -359,24 +359,6 @@ if uploaded_file:
                             delta=f"{checked_count/total_count*100:.1f}%" if total_count > 0 else "0%"
                         )
 
-        # ----------------------- EXPORT -----------------------
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            result_to_export = result.copy()
-            result_to_export['flight_date'] = result_to_export['flight_date'].dt.strftime('%Y-%m-%d')
-            result_to_export['daily_needed'] = result_to_export['daily_needed'].fillna(0).round(1)
-            result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].fillna(0).round(1)
-            result_to_export['sold_yesterday'] = result_to_export['sold_yesterday'].fillna(0).round(1)
-            # В экспорт кладём числовое значение LF (0..100), а не строку с '%'
-            result_to_export['load_factor'] = result_to_export['load_factor_num'].fillna(0).round(1)
-            result_to_export = result_to_export.drop(columns=['load_factor_num'])
-            result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
-
-        st.download_button(
-            label="💾 Скачать полный отчёт в Excel",
-            data=output.getvalue(),
-            file_name=f"sales_speed_analysis_{today.strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
     except Exception as e:
