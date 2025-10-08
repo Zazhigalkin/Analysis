@@ -112,15 +112,16 @@ if uploaded_file:
         
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # Преобразование load_factor из процентов в число (98,7% -> 98.7)
+        # ПРАВИЛЬНОЕ преобразование load_factor - убираем только символы, но не делим на 100
         df['load_factor_num'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
+        # Load Factor уже в процентах (98.7), так что оставляем как есть
 
         # Улучшенная классификация с проверкой Load Factor
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
             diff = row['diff_vs_plan']
-            load_factor = row['load_factor_num']
+            load_factor = row['load_factor_num']  # Уже в процентах (98.7)
             sold_yesterday = row['sold_yesterday']
             
             # Проверка: если вчера не было продаж, но Load Factor > 90% - считаем по плану
@@ -155,6 +156,7 @@ if uploaded_file:
         # Округление до 1 знака после запятой для daily_needed и diff_vs_plan
         result['daily_needed'] = result['daily_needed'].round(1)
         result['diff_vs_plan'] = result['diff_vs_plan'].round(1)
+        result['load_factor_num'] = result['load_factor_num'].round(1)
 
         # Визуализация
         col1, col2 = st.columns([3, 1])
@@ -250,7 +252,7 @@ if uploaded_file:
         display_df = formatted_result.copy()
         display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}")
         display_df['diff_vs_plan'] = display_df['diff_vs_plan'].apply(lambda x: f"{x:.1f}")
-        display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.2f}%")
+        display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.1f}%")  # Теперь будет 68.0% вместо 0.68%
         
         # Переименовываем колонки для отображения
         display_df = display_df.rename(columns={'load_factor_num': 'load_factor'})
@@ -274,7 +276,7 @@ if uploaded_file:
                         display_data = status_df[display_cols].copy()
                         display_data['daily_needed'] = display_data['daily_needed'].apply(lambda x: f"{x:.1f}")
                         display_data['diff_vs_plan'] = display_data['diff_vs_plan'].apply(lambda x: f"{x:.1f}")
-                        display_data['load_factor_num'] = display_data['load_factor_num'].apply(lambda x: f"{x:.2f}%")
+                        display_data['load_factor_num'] = display_data['load_factor_num'].apply(lambda x: f"{x:.1f}%")
                         display_data = display_data.rename(columns={'load_factor_num': 'load_factor'})
                         st.dataframe(
                             display_data,
@@ -288,7 +290,7 @@ if uploaded_file:
             with col1:
                 st.metric("Средний дневной темп", f"{filtered_result['daily_needed'].mean():.1f}")
                 st.metric("Всего осталось мест", f"{filtered_result['remaining_seats'].sum():.0f}")
-                st.metric("Средний Load Factor", f"{filtered_result['load_factor_num'].mean():.2f}%")
+                st.metric("Средний Load Factor", f"{filtered_result['load_factor_num'].mean():.1f}%")
                 
             with col2:
                 st.metric("Медианное отклонение от плана", f"{filtered_result['diff_vs_plan'].median():.1f}")
@@ -310,7 +312,7 @@ if uploaded_file:
             result_to_export = result.copy()
             result_to_export['daily_needed'] = result_to_export['daily_needed'].round(1)
             result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].round(1)
-            result_to_export['load_factor'] = result_to_export['load_factor_num'].round(2)
+            result_to_export['load_factor'] = result_to_export['load_factor_num'].round(1)
             result_to_export = result_to_export.drop('load_factor_num', axis=1)
             result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
             
@@ -333,7 +335,7 @@ if uploaded_file:
                     len(result[result['status'] == '🟢 По плану']),
                     len(result[result['status'] == '⚪ До рейса ещё далеко']),
                     result['remaining_seats'].sum(),
-                    f"{result['load_factor_num'].mean():.2f}%",
+                    f"{result['load_factor_num'].mean():.1f}%",
                     len(result[result['load_factor_num'] > 90])
                 ]
             })
