@@ -359,7 +359,7 @@ if uploaded_file:
                             delta=f"{checked_count/total_count*100:.1f}%" if total_count > 0 else "0%"
                         )
 
-        )
+        
 
     except Exception as e:
         st.error(f"❌ Ошибка при обработке файла: {str(e)}")
