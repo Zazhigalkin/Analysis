@@ -16,6 +16,7 @@ with st.expander("ℹ️ Инструкция по использованию"):
     - `Ind SS` - Всего продано билетов
     - `Ind SS yesterday` - Продано вчера
     - `Cap` - Вместимость самолёта
+    - `LF` - Load Factor (загрузка рейса)
     
     **Статусы рейсов:**
     - 🔵 Перепродажа - значительно превысили дневной план
@@ -40,10 +41,11 @@ if uploaded_file:
             'flt_date&num': 'flight',
             'Ind SS': 'sold_total',
             'Ind SS yesterday': 'sold_yesterday',
-            'Cap': 'total_seats'
+            'Cap': 'total_seats',
+            'LF': 'load_factor'
         })
 
-        required_columns = ['flight','sold_total','sold_yesterday','total_seats']
+        required_columns = ['flight','sold_total','sold_yesterday','total_seats','load_factor']
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
@@ -110,11 +112,20 @@ if uploaded_file:
         
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # Улучшенная классификация
+        # Преобразование load_factor из процентов в число (98,7% -> 98.7)
+        df['load_factor'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
+
+        # Улучшенная классификация с проверкой Load Factor
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
             diff = row['diff_vs_plan']
+            load_factor = row['load_factor']
+            sold_yesterday = row['sold_yesterday']
+            
+            # Проверка: если вчера не было продаж, но Load Factor > 90% - считаем по плану
+            if sold_yesterday == 0 and load_factor > 90:
+                return "🟢 По плану"
             
             # Долгосрочные рейсы с малым спросом
             if days_to_flight > 30 and daily_needed < 4:
@@ -131,17 +142,21 @@ if uploaded_file:
 
         df['status'] = df.apply(classify, axis=1)
 
-        # Итоговая таблица
+        # Итоговая таблица с округлением до 1 знака после запятой
         result_columns = [
             'flight', 'flight_date', 'flight_number', 'route', 
             'total_seats', 'sold_total', 'sold_yesterday', 
             'remaining_seats', 'days_to_flight', 'daily_needed', 
-            'diff_vs_plan', 'status'
+            'diff_vs_plan', 'load_factor', 'status'
         ]
         
         result = df[result_columns].copy()
-        result['daily_needed'] = result['daily_needed'].round(2)
-        result['diff_vs_plan'] = result['diff_vs_plan'].round(2)
+        
+        # Округление до 1 знака после запятой
+        numeric_columns = ['daily_needed', 'diff_vs_plan', 'load_factor']
+        for col in numeric_columns:
+            if col in result.columns:
+                result[col] = result[col].round(1)
 
         # Визуализация
         col1, col2 = st.columns([3, 1])
@@ -172,7 +187,7 @@ if uploaded_file:
 
         # Фильтрация данных
         st.subheader("🔍 Фильтры")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             selected_status = st.multiselect(
@@ -195,12 +210,21 @@ if uploaded_file:
                 options=result['route'].unique(),
                 default=result['route'].unique()
             )
+            
+        with col4:
+            min_load_factor = float(result['load_factor'].min())
+            max_load_factor = float(result['load_factor'].max())
+            load_factor_range = st.slider(
+                "Load Factor (%)",
+                min_load_factor, max_load_factor, (min_load_factor, max_load_factor)
+            )
 
         # Применение фильтров
         filtered_result = result[
             (result['status'].isin(selected_status)) &
             (result['days_to_flight'].between(days_range[0], days_range[1])) &
-            (result['route'].isin(routes))
+            (result['route'].isin(routes)) &
+            (result['load_factor'].between(load_factor_range[0], load_factor_range[1]))
         ]
 
         # Функция для подсветки строк
@@ -214,8 +238,18 @@ if uploaded_file:
             else:
                 return [''] * len(row)
 
+        # Форматирование числовых колонок для отображения
+        display_columns = [
+            'flight', 'flight_date', 'flight_number', 'route', 
+            'total_seats', 'sold_total', 'sold_yesterday', 
+            'remaining_seats', 'days_to_flight', 'daily_needed', 
+            'diff_vs_plan', 'load_factor', 'status'
+        ]
+        
+        formatted_result = filtered_result[display_columns].copy()
+        
         st.dataframe(
-            filtered_result.style.apply(highlight_rows, axis=1),
+            formatted_result.style.apply(highlight_rows, axis=1),
             use_container_width=True,
             height=400
         )
@@ -229,7 +263,7 @@ if uploaded_file:
                 status_df = attention_df[attention_df['status'] == status]
                 if not status_df.empty:
                     with st.expander(f"{status} ({len(status_df)} рейсов)"):
-                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight']
+                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor']
                         st.dataframe(
                             status_df[display_cols],
                             use_container_width=True
@@ -242,16 +276,20 @@ if uploaded_file:
             with col1:
                 st.metric("Средний дневной темп", f"{filtered_result['daily_needed'].mean():.1f}")
                 st.metric("Всего осталось мест", f"{filtered_result['remaining_seats'].sum():.0f}")
+                st.metric("Средний Load Factor", f"{filtered_result['load_factor'].mean():.1f}%")
                 
             with col2:
                 st.metric("Медианное отклонение от плана", f"{filtered_result['diff_vs_plan'].median():.1f}")
                 st.metric("Средние дни до вылета", f"{filtered_result['days_to_flight'].mean():.0f}")
+                st.metric("Рейсов с LF > 90%", f"{len(filtered_result[filtered_result['load_factor'] > 90])}")
                 
             with col3:
                 st.metric("Рейсов отстаёт от плана", 
                          len(filtered_result[filtered_result['status'] == '🔴 Отстаём']))
                 st.metric("Рейсов с перепродажей", 
                          len(filtered_result[filtered_result['status'] == '🔵 Перепродажа']))
+                st.metric("Рейсов по плану", 
+                         len(filtered_result[filtered_result['status'] == '🟢 По плану']))
 
         # Скачать Excel
         output = io.BytesIO()
@@ -259,14 +297,25 @@ if uploaded_file:
             result.to_excel(writer, index=False, sheet_name='Sales_Speed')
             # Добавляем лист с аналитикой
             summary = pd.DataFrame({
-                'Метрика': ['Всего рейсов', 'Отстают', 'Перепродажа', 'По плану', 'Далёкие рейсы', 'Общий остаток мест'],
+                'Метрика': [
+                    'Всего рейсов', 
+                    'Отстают', 
+                    'Перепродажа', 
+                    'По плану', 
+                    'Далёкие рейсы',
+                    'Общий остаток мест',
+                    'Средний Load Factor',
+                    'Рейсов с LF > 90%'
+                ],
                 'Значение': [
                     len(result),
                     len(result[result['status'] == '🔴 Отстаём']),
                     len(result[result['status'] == '🔵 Перепродажа']),
                     len(result[result['status'] == '🟢 По плану']),
                     len(result[result['status'] == '⚪ До рейса ещё далеко']),
-                    result['remaining_seats'].sum()
+                    result['remaining_seats'].sum(),
+                    f"{result['load_factor'].mean():.1f}%",
+                    len(result[result['load_factor'] > 90])
                 ]
             })
             summary.to_excel(writer, index=False, sheet_name='Аналитика')
