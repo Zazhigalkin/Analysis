@@ -112,9 +112,8 @@ if uploaded_file:
         
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # Преобразование load_factor из процентов в число (98,7% -> 98.7) и оставляем в %
+        # Преобразование load_factor из процентов в число (98,7% -> 98.7)
         df['load_factor_num'] = df['load_factor'].astype(str).str.replace(',', '.').str.rstrip('%').astype(float)
-        df['load_factor'] = df['load_factor_num']  # Оставляем как число для вычислений, но отображаем с %
 
         # Улучшенная классификация с проверкой Load Factor
         def classify(row):
@@ -143,20 +142,19 @@ if uploaded_file:
 
         df['status'] = df.apply(classify, axis=1)
 
-        # Итоговая таблица с округлением до 1 знака после запятой
+        # Итоговая таблица с правильным округлением
         result_columns = [
             'flight', 'flight_date', 'flight_number', 'route', 
             'total_seats', 'sold_total', 'sold_yesterday', 
             'remaining_seats', 'days_to_flight', 'daily_needed', 
-            'diff_vs_plan', 'load_factor', 'status'
+            'diff_vs_plan', 'load_factor_num', 'status'
         ]
         
         result = df[result_columns].copy()
         
-        # Округление до 1 знака после запятой
+        # Округление до 1 знака после запятой для daily_needed и diff_vs_plan
         result['daily_needed'] = result['daily_needed'].round(1)
         result['diff_vs_plan'] = result['diff_vs_plan'].round(1)
-        result['load_factor'] = result['load_factor'].round(1)
 
         # Визуализация
         col1, col2 = st.columns([3, 1])
@@ -212,8 +210,8 @@ if uploaded_file:
             )
             
         with col4:
-            min_load_factor = float(result['load_factor'].min())
-            max_load_factor = float(result['load_factor'].max())
+            min_load_factor = float(result['load_factor_num'].min())
+            max_load_factor = float(result['load_factor_num'].max())
             load_factor_range = st.slider(
                 "Load Factor (%)",
                 min_load_factor, max_load_factor, (min_load_factor, max_load_factor)
@@ -224,7 +222,7 @@ if uploaded_file:
             (result['status'].isin(selected_status)) &
             (result['days_to_flight'].between(days_range[0], days_range[1])) &
             (result['route'].isin(routes)) &
-            (result['load_factor'].between(load_factor_range[0], load_factor_range[1]))
+            (result['load_factor_num'].between(load_factor_range[0], load_factor_range[1]))
         ]
 
         # Функция для подсветки строк
@@ -243,14 +241,19 @@ if uploaded_file:
             'flight', 'flight_date', 'flight_number', 'route', 
             'total_seats', 'sold_total', 'sold_yesterday', 
             'remaining_seats', 'days_to_flight', 'daily_needed', 
-            'diff_vs_plan', 'load_factor', 'status'
+            'diff_vs_plan', 'load_factor_num', 'status'
         ]
         
         formatted_result = filtered_result[display_columns].copy()
         
-        # Форматируем отображение Load Factor с символом %
+        # Форматируем отображение чисел
         display_df = formatted_result.copy()
-        display_df['load_factor'] = display_df['load_factor'].apply(lambda x: f"{x}%")
+        display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}")
+        display_df['diff_vs_plan'] = display_df['diff_vs_plan'].apply(lambda x: f"{x:.1f}")
+        display_df['load_factor_num'] = display_df['load_factor_num'].apply(lambda x: f"{x:.2f}%")
+        
+        # Переименовываем колонки для отображения
+        display_df = display_df.rename(columns={'load_factor_num': 'load_factor'})
         
         st.dataframe(
             display_df.style.apply(highlight_rows, axis=1),
@@ -267,9 +270,12 @@ if uploaded_file:
                 status_df = attention_df[attention_df['status'] == status]
                 if not status_df.empty:
                     with st.expander(f"{status} ({len(status_df)} рейсов)"):
-                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor']
+                        display_cols = ['flight', 'flight_date', 'route', 'sold_yesterday', 'daily_needed', 'diff_vs_plan', 'days_to_flight', 'load_factor_num']
                         display_data = status_df[display_cols].copy()
-                        display_data['load_factor'] = display_data['load_factor'].apply(lambda x: f"{x}%")
+                        display_data['daily_needed'] = display_data['daily_needed'].apply(lambda x: f"{x:.1f}")
+                        display_data['diff_vs_plan'] = display_data['diff_vs_plan'].apply(lambda x: f"{x:.1f}")
+                        display_data['load_factor_num'] = display_data['load_factor_num'].apply(lambda x: f"{x:.2f}%")
+                        display_data = display_data.rename(columns={'load_factor_num': 'load_factor'})
                         st.dataframe(
                             display_data,
                             use_container_width=True
@@ -282,12 +288,12 @@ if uploaded_file:
             with col1:
                 st.metric("Средний дневной темп", f"{filtered_result['daily_needed'].mean():.1f}")
                 st.metric("Всего осталось мест", f"{filtered_result['remaining_seats'].sum():.0f}")
-                st.metric("Средний Load Factor", f"{filtered_result['load_factor'].mean():.1f}%")
+                st.metric("Средний Load Factor", f"{filtered_result['load_factor_num'].mean():.2f}%")
                 
             with col2:
                 st.metric("Медианное отклонение от плана", f"{filtered_result['diff_vs_plan'].median():.1f}")
                 st.metric("Средние дни до вылета", f"{filtered_result['days_to_flight'].mean():.0f}")
-                st.metric("Рейсов с LF > 90%", f"{len(filtered_result[filtered_result['load_factor'] > 90])}")
+                st.metric("Рейсов с LF > 90%", f"{len(filtered_result[filtered_result['load_factor_num'] > 90])}")
                 
             with col3:
                 st.metric("Рейсов отстаёт от плана", 
@@ -300,9 +306,12 @@ if uploaded_file:
         # Скачать Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Для Excel оставляем load_factor как число
+            # Для Excel форматируем числа правильно
             result_to_export = result.copy()
-            result_to_export['load_factor'] = result_to_export['load_factor'].apply(lambda x: f"{x}%")
+            result_to_export['daily_needed'] = result_to_export['daily_needed'].round(1)
+            result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].round(1)
+            result_to_export['load_factor'] = result_to_export['load_factor_num'].round(2)
+            result_to_export = result_to_export.drop('load_factor_num', axis=1)
             result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
             
             # Добавляем лист с аналитикой
@@ -324,8 +333,8 @@ if uploaded_file:
                     len(result[result['status'] == '🟢 По плану']),
                     len(result[result['status'] == '⚪ До рейса ещё далеко']),
                     result['remaining_seats'].sum(),
-                    f"{result['load_factor'].mean():.1f}%",
-                    len(result[result['load_factor'] > 90])
+                    f"{result['load_factor_num'].mean():.2f}%",
+                    len(result[result['load_factor_num'] > 90])
                 ]
             })
             summary.to_excel(writer, index=False, sheet_name='Аналитика')
