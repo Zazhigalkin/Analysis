@@ -41,6 +41,43 @@ with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И
     - **diff_vs_plan** = sold_yesterday - daily_needed (отклонение от плана)
     """)
 
+# Инструкция по формату файла
+with st.expander("📁 ФОРМАТ ЗАГРУЖАЕМОГО EXCEL-ФАЙЛА"):
+    st.markdown("""
+    ### Обязательные колонки в Excel файле:
+    
+    | Название колонки | Описание | Пример |
+    |------------------|----------|---------|
+    | `flt_date&num` | Дата и номер рейса | `2024.01.15 - SU123 - MOSCOW-SOCHI` |
+    | `LF` | Load Factor (загрузка) | `98,7%` |
+    | `Av fare` | Средний тариф | `4 039` |
+    | `Cap` | Вместимость самолета | `227` |
+    | `Av seats` | Доступные места | `3` |
+    | `Ind SS` | Всего продано билетов | `214` |
+    | `Ind SS today` | Продано сегодня | `0` |
+    | `Ind SS yesterday` | **Продано вчера** | `4` |
+    | `Ind SS 2-3 days before` | Продано 2-3 дня назад | `19` |
+    | `Ind SS 4-6 days before` | Продано 4-6 дней назад | `27` |
+    | `Ind SS 7-13 days before` | Продано 7-13 дней назад | `66` |
+    | `Ind SS last 14 days` | Продано за последние 14 дней | `131` |
+    | `Av fare ind` | Средний индивидуальный тариф | `4 039` |
+    | `Av fare ind today` | Средний тариф сегодня | `0` |
+    | `Av fare ind yesterday` | Средний тариф вчера | `9 594` |
+    | `Av fare ind 2-3 days before` | Средний тариф 2-3 дня назад | `4 540` |
+    | `Av fare ind 4-6 days before` | Средний тариф 4-6 дней назад | `4 529` |
+    | `Av fare int 7-13 days before` | Средний тариф 7-13 дней назад | `3 344` |
+    | `Av fare ind last 14 days` | Средний тариф за 14 дней | `3 860` |
+
+    ### 🔍 Для анализа используются следующие колонки:
+    - **`flt_date&num`** - для определения даты рейса и маршрута
+    - **`Ind SS`** - общее количество проданных билетов  
+    - **`Ind SS yesterday`** - продажи за вчера
+    - **`Cap`** - вместимость самолета
+    - **`LF`** - загрузка рейса
+
+    Остальные колонки загружаются, но не используются в анализе темпа продаж.
+    """)
+
 uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
 
 if uploaded_file:
@@ -315,29 +352,6 @@ if uploaded_file:
                             use_container_width=True
                         )
 
-        # Дополнительная аналитика
-        with st.expander("📈 Дополнительная аналитика"):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Средний дневной темп", f"{filtered_result['daily_needed'].mean():.1f}")
-                st.metric("Всего осталось мест", f"{filtered_result['remaining_seats'].sum():.0f}")
-                st.metric("Средний Load Factor", f"{filtered_result['load_factor_num'].mean():.1f}%")
-                st.metric("Рейсов с daily_needed < 3", f"{len(filtered_result[filtered_result['daily_needed'] < 3])}")
-                
-            with col2:
-                st.metric("Медианное отклонение от плана", f"{filtered_result['diff_vs_plan'].median():.1f}")
-                st.metric("Средние дни до вылета", f"{filtered_result['days_to_flight'].mean():.0f}")
-                st.metric("Рейсов с LF > 90%", f"{len(filtered_result[filtered_result['load_factor_num'] > 90])}")
-                
-            with col3:
-                st.metric("Рейсов отстаёт от плана", 
-                         len(filtered_result[filtered_result['status'] == '🔴 Отстаём']))
-                st.metric("Рейсов с перепродажей", 
-                         len(filtered_result[filtered_result['status'] == '🔵 Перепродажа']))
-                st.metric("Рейсов по плану", 
-                         len(filtered_result[filtered_result['status'] == '🟢 По плану']))
-
         # Скачать Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -350,33 +364,6 @@ if uploaded_file:
             result_to_export['load_factor'] = result_to_export['load_factor_num'].fillna(0).round(1)
             result_to_export = result_to_export.drop('load_factor_num', axis=1)
             result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
-            
-            # Добавляем лист с аналитикой
-            summary = pd.DataFrame({
-                'Метрика': [
-                    'Всего рейсов', 
-                    'Отстают', 
-                    'Перепродажа', 
-                    'По плану', 
-                    'Далёкие рейсы',
-                    'Общий остаток мест',
-                    'Средний Load Factor',
-                    'Рейсов с LF > 90%',
-                    'Рейсов с daily_needed < 3'
-                ],
-                'Значение': [
-                    len(result),
-                    len(result[result['status'] == '🔴 Отстаём']),
-                    len(result[result['status'] == '🔵 Перепродажа']),
-                    len(result[result['status'] == '🟢 По плану']),
-                    len(result[result['status'] == '⚪ До рейса ещё далеко']),
-                    result['remaining_seats'].sum(),
-                    f"{result['load_factor_num'].mean():.1f}%",
-                    len(result[result['load_factor_num'] > 90]),
-                    len(result[result['daily_needed'] < 3])
-                ]
-            })
-            summary.to_excel(writer, index=False, sheet_name='Аналитика')
             
         st.download_button(
             label="💾 Скачать полный отчёт в Excel",
