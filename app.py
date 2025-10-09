@@ -3,61 +3,10 @@ import pandas as pd
 from datetime import datetime
 import io
 import numpy as np
-import time
-
-# ----------------------- REAL-TIME USER TRACKING -----------------------
-def init_user_tracking():
-    """Инициализация отслеживания пользователей в реальном времени"""
-    if 'active_users' not in st.session_state:
-        st.session_state.active_users = {}
-    if 'user_last_activity' not in st.session_state:
-        st.session_state.user_last_activity = {}
-
-def get_user_session_id():
-    """Генерируем ID сессии для пользователя"""
-    if 'user_session_id' not in st.session_state:
-        st.session_state.user_session_id = f"session_{int(time.time())}_{np.random.randint(1000, 9999)}"
-    return st.session_state.user_session_id
-
-def update_user_activity():
-    """Обновляем активность пользователя"""
-    init_user_tracking()
-    session_id = get_user_session_id()
-    current_time = time.time()
-    
-    # Обновляем время активности текущего пользователя
-    st.session_state.user_last_activity[session_id] = current_time
-    
-    # Очищаем неактивных пользователей (неактивны более 5 минут)
-    timeout = 300  # 5 минут в секундах
-    active_users = {}
-    for user_id, last_active in st.session_state.user_last_activity.items():
-        if current_time - last_active < timeout:
-            active_users[user_id] = last_active
-    
-    st.session_state.user_last_activity = active_users
-    st.session_state.active_users_count = len(active_users)
 
 # ----------------------- PAGE CONFIG -----------------------
 st.set_page_config(page_title="Анализ темпов продаж", page_icon="📈", layout="wide")
-
-# Обновляем активность пользователя при каждой загрузке
-update_user_activity()
-
-# ----------------------- HEADER WITH USER COUNT -----------------------
-col1, col2, col3 = st.columns([3, 1, 1])
-with col1:
-    st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
-with col2:
-    # Красивое отображение текущих пользователей
-    active_users = st.session_state.get('active_users_count', 1)
-    st.metric(
-        "👥 Использует сейчас", 
-        f"{active_users} чел",
-        delta=None
-    )
-with col3:
-    st.metric("🕐 Время обновления", datetime.now().strftime('%H:%M'))
+st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
 
 # ----------------------- HELPERS ---------------------------
 def clean_number(s: pd.Series) -> pd.Series:
@@ -80,6 +29,8 @@ def clean_percent(s: pd.Series) -> pd.Series:
          .str.replace(',','.', regex=False),
         errors='coerce'
     )
+    # Если среднее по столбцу похоже на долю (например 0.92), домножаем на 100.
+    # Порог 2 работает устойчиво и к редким аномалиям.
     if val.mean(skipna=True) < 2:
         val = val * 100
     return val
@@ -96,23 +47,53 @@ with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И
     - `Av seats` — Доступные места
 
     ### 🎯 ЛОГИКА КЛАССИФИКАЦИИ СТАТУСОВ (в порядке приоритета):
-    // ... остальная инструкция без изменений ...
+
+    1. **🔵 Перепродажа** — если выполняется ЛЮБОЕ из условий:
+       - `daily_needed < 3` и `diff_vs_plan > 10` (малый план + огромные продажи)
+       - `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday > daily_needed`
+       - `diff_vs_plan > max(5, 0.3 * daily_needed)`
+
+    2. **🟢 По плану** — если выполняется ЛЮБОЕ из условий:
+       - `daily_needed < 3` (малый план)
+       - `sold_yesterday = 0` и `load_factor > 90%`
+       - `|diff_vs_plan| <= max(5, 0.3 * daily_needed)`
+
+    3. **⚪ До рейса ещё далеко** — если:
+       - `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday <= daily_needed`
+
+    4. **🔴 Отстаём** — во всех остальных случаях значимого недовыполнения.
+
+    ### 📊 РАСЧЁТНЫЕ ПОКАЗАТЕЛИ:
+    - **days_to_flight** — дни до вылета (мин. 1)
+    - **sold_total** = `Cap - Av seats`  ← учитывает жёсткие блоки
+    - **remaining_seats** = `Av seats`
+    - **daily_needed** = `remaining_seats / days_to_flight`
+    - **diff_vs_plan** = `sold_yesterday - daily_needed`
     """)
 
-# ----------------------- ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ -----------------------
 with st.expander("📁 ФОРМАТ ЗАГРУЖАЕМОГО EXCEL-ФАЙЛА"):
     st.markdown("""
     ### Обязательные колонки:
-    // ... существующий контент ...
+    
+    | Название | Описание | Пример |
+    |---|---|---|
+    | `flt_date&num` | Дата и номер рейса | `2024.01.15 - SU123 - MOSCOW-SOCHI` |
+    | `LF` | Load Factor | `98,7%` или `0,987` |
+    | `Av fare` | Средний тариф | `4 039` |
+    | `Cap` | Вместимость самолёта | `227` |
+    | `Av seats` | Доступные места | `3` |
+    | `Ind SS` | Продано (без блоков) | `214` |
+    | `Ind SS today` | Продано сегодня | `0` |
+    | `Ind SS yesterday` | Продано вчера | `4` |
+
+    ### Для анализа используются:
+    - **`flt_date&num`**, **`Cap`**, **`Av seats`**, **`Ind SS`**, **`Ind SS yesterday`**, **`LF`**
     """)
 
 uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Обновляем активность при работе с файлом
-        update_user_activity()
-        
         df = pd.read_excel(uploaded_file, engine="openpyxl")
         if df.empty:
             st.error("❌ Файл пустой")
@@ -121,7 +102,7 @@ if uploaded_file:
         # ---------- Rename ----------
         df = df.rename(columns={
             'flt_date&num': 'flight',
-            'Ind SS': 'sold_total_raw',          
+            'Ind SS': 'sold_total_raw',          # как в файле (без блоков), дальше не используем в расчётах
             'Ind SS yesterday': 'sold_yesterday',
             'Cap': 'total_seats',
             'LF': 'load_factor',
@@ -158,10 +139,10 @@ if uploaded_file:
 
         # ---------- Clean numbers (vectorized) ----------
         df['total_seats']     = clean_number(df['total_seats'])
-        df['sold_total_raw']  = clean_number(df['sold_total_raw']).fillna(0)
+        df['sold_total_raw']  = clean_number(df['sold_total_raw']).fillna(0)  # инфо-колонка, в расчётах не используется
         df['sold_yesterday']  = clean_number(df['sold_yesterday']).fillna(0)
-        df['av_seats']        = clean_number(df['Av seats'])
-        df['load_factor_num'] = clean_percent(df['load_factor']).fillna(0)
+        df['av_seats']        = clean_number(df['Av seats'])  # оставляем NaN для контроля
+        df['load_factor_num'] = clean_percent(df['load_factor']).fillna(0)   # ✅ всегда 0..100
 
         # ---------- Require Av seats ----------
         if df['av_seats'].isna().any():
@@ -186,7 +167,9 @@ if uploaded_file:
             st.stop()
 
         # ---------- NEW sold_total & remaining ----------
+        # sold_total включает жёсткие блоки: Cap - Av seats
         df['sold_total']      = (df['total_seats'] - df['av_seats']).clip(lower=0)
+        # остаток мест равен Av seats
         df['remaining_seats'] = df['av_seats'].clip(lower=0)
 
         # ---------- Daily plan & diffs ----------
@@ -197,7 +180,7 @@ if uploaded_file:
         )
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # ---------- Classification (УПРОЩЕННАЯ ЛОГИКА - БЕЗ "ДАЛЕКО ДО РЕЙСА") ----------
+        # ---------- Classification (ОБНОВЛЕННАЯ ЛОГИКА) ----------
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
@@ -205,25 +188,32 @@ if uploaded_file:
             load_factor = row['load_factor_num']
             sold_yesterday = row['sold_yesterday']
             
-            if daily_needed < 3 and diff > 10:
+            # 1. СНАЧАЛА ПРОВЕРЯЕМ ПЕРЕПРОДАЖУ ДЛЯ МАЛЫХ PLANS (НОВОЕ УСЛОВИЕ!)
+            if daily_needed < 3 and diff > 10:  # если малый план, но ОГРОМНЫЕ продажи
                 return "🔵 Перепродажа"
             
+            # 2. Полный рейс
             if sold_yesterday == 0 and load_factor > 90:
                 return "🟢 По плану"
             
+            # 3. Малый план (но без гигантских продаж)
             if daily_needed < 3:
                 return "🟢 По плану"
             
+            # 4. Далёкие рейсы
             if days_to_flight > 30 and daily_needed < 4:
                 if sold_yesterday > daily_needed:
                     return "🔵 Перепродажа"
                 else:
-                    return "🟢 По плану"
+                    return "⚪ До рейса ещё далеко"
             
-            if diff > max(5, daily_needed * 0.3):
+            # 5. Основная классификация
+            elif diff > max(5, daily_needed * 0.3):
                 return "🔵 Перепродажа"
+            # Небольшое отклонение от плана
             elif abs(diff) <= max(5, daily_needed * 0.3):
                 return "🟢 По плану"
+            # Значительное недовыполнение
             else:
                 return "🔴 Отстаём"
 
@@ -247,22 +237,18 @@ if uploaded_file:
         result['remaining_seats']  = result['remaining_seats'].fillna(0).round(0).astype(int)
 
         # ----------------------- SUMMARY HEADER -----------------------
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2 = st.columns([3, 1])
         with col1:
             st.subheader("📊 Результаты анализа темпа продаж")
         with col2:
             status_counts = result['status'].value_counts()
             st.metric("Всего рейсов", len(result))
-        with col3:
-            # Обновляем счетчик при отображении результатов
-            update_user_activity()
-            active_users = st.session_state.get('active_users_count', 1)
-            st.metric("👥 Активных пользователей", active_users)
 
         status_colors = {
             "🔵 Перепродажа": "#1f77b4",
             "🟢 По плану": "#2ca02c",
-            "🔴 Отстаём": "#d62728"
+            "🔴 Отстаём": "#d62728",
+            "⚪ До рейса ещё далеко": "#7f7f7f"
         }
         cols = st.columns(len(status_counts))
         for i, (status, count) in enumerate(status_counts.items()):
@@ -273,8 +259,158 @@ if uploaded_file:
                 unsafe_allow_html=True
             )
 
-        # ----------------------- ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ -----------------------
-        # ... (фильтры, таблица, блок внимания, экспорт) ...
+        # ----------------------- FILTERS -----------------------
+        st.subheader("🔍 Фильтры")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            selected_status = st.multiselect(
+                "Статус рейсов",
+                options=result['status'].unique(),
+                default=result['status'].unique()
+            )
+        with col2:
+            min_days = int(result['days_to_flight'].min())
+            max_days = int(result['days_to_flight'].max())
+            days_range = st.slider("Дни до вылета", min_days, max_days, (min_days, max_days))
+        with col3:
+            routes = st.multiselect(
+                "Маршруты",
+                options=result['route'].unique(),
+                default=result['route'].unique()
+            )
+        with col4:
+            min_load = float(result['load_factor_num'].min())
+            max_load = float(result['load_factor_num'].max())
+            load_factor_range = st.slider("Load Factor (%)", min_load, max_load, (min_load, max_load))
+
+        filtered_result = result[
+            (result['status'].isin(selected_status)) &
+            (result['days_to_flight'].between(days_range[0], days_range[1])) &
+            (result['route'].isin(routes)) &
+            (result['load_factor_num'].between(load_factor_range[0], load_factor_range[1]))
+        ]
+
+        # ----------------------- TABLE STYLING -----------------------
+        def highlight_rows(row):
+            if row['status'] == '🔴 Отстаём':
+                return ['background-color: #ffcccc'] * len(row)
+            elif row['status'] == '🔵 Перепродажа':
+                return ['background-color: #ccffcc'] * len(row)
+            elif row['status'] == '⚪ До рейса ещё далеко':
+                return ['background-color: #f0f0f0'] * len(row)
+            else:
+                return [''] * len(row)
+
+        display_columns = [
+            'flight', 'flight_date', 'flight_number', 'route', 
+            'total_seats', 'sold_total', 'sold_yesterday', 
+            'remaining_seats', 'days_to_flight', 'daily_needed', 
+            'diff_vs_plan', 'load_factor_num', 'status'
+        ]
+        formatted_result = filtered_result[display_columns].copy()
+
+        # Приведём форматы к красивому виду в UI
+        display_df = formatted_result.copy()
+        # ✅ Изменено: формат даты на ДД.ММ.ГГГГ
+        display_df['flight_date'] = display_df['flight_date'].dt.strftime('%d.%m.%Y')
+        display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
+        display_df['diff_vs_plan'] = display_df['diff_vs_plan'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
+        display_df['sold_yesterday'] = display_df['sold_yesterday'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
+        # ✅ load_factor как 100%
+        display_df['load_factor'] = display_df['load_factor_num'].apply(lambda x: f"{round(x):.0f}%")
+        display_df = display_df.drop(columns=['load_factor_num'])
+
+        st.dataframe(
+            display_df.style.apply(highlight_rows, axis=1),
+            use_container_width=True,
+            height=420
+        )
+
+        # ----------------------- ATTENTION BLOCK -----------------------
+        attention_df = filtered_result[filtered_result['status'].isin(["🔴 Отстаём", "🔵 Перепродажа"])]
+        if not attention_df.empty:
+            st.subheader("⚠️ Рейсы, требующие внимания")
+
+            if 'checked_flights' not in st.session_state:
+                st.session_state.checked_flights = {}
+
+            for status in ["🔴 Отстаём", "🔵 Перепродажа"]:
+                status_df = attention_df[attention_df['status'] == status]
+                if not status_df.empty:
+                    with st.expander(f"{status} ({len(status_df)} рейсов)"):
+                        st.info("✅ Отмечайте рейсы, которые уже проверили")
+
+                        for idx, row in status_df.iterrows():
+                            flight_key = row['flight']
+                            if flight_key not in st.session_state.checked_flights:
+                                st.session_state.checked_flights[flight_key] = False
+
+                            c1, c2 = st.columns([1, 10])
+                            with c1:
+                                is_checked = st.checkbox(
+                                    "",
+                                    value=st.session_state.checked_flights[flight_key],
+                                    key=f"check_{flight_key}",
+                                    help="Отметьте, если рейс уже проверен"
+                                )
+                                st.session_state.checked_flights[flight_key] = is_checked
+                            with c2:
+                                # ✅ Изменено: формат даты в названии рейса на ДД.ММ.ГГГГ
+                                flight_parts = row['flight'].split(' - ', 2)
+                                if len(flight_parts) >= 3:
+                                    # Преобразуем первую часть (дату) в нужный формат
+                                    try:
+                                        original_date = datetime.strptime(flight_parts[0], '%Y.%m.%d')
+                                        formatted_date = original_date.strftime('%d.%m.%Y')
+                                        formatted_flight = f"{formatted_date} - {flight_parts[1]} - {flight_parts[2]}"
+                                    except:
+                                        formatted_flight = row['flight']
+                                else:
+                                    formatted_flight = row['flight']
+                                
+                                st.markdown(f"~~{formatted_flight}~~ ✅" if is_checked else f"**{formatted_flight}**")
+                                st.markdown(f"""
+                                - **Маршрут:** {row['route']}
+                                - **Дата вылета:** {row['flight_date'].strftime('%d.%m.%Y')}
+                                - **Продано вчера:** {row['sold_yesterday']:.1f} 
+                                - **Необходимый темп:** {row['daily_needed']:.1f}
+                                - **Отклонение:** {row['diff_vs_plan']:.1f}
+                                - **Load Factor:** {round(row['load_factor_num']):.0f}%
+                                - **Дней до вылета:** {row['days_to_flight']}
+                                """)
+                            st.markdown("---")
+
+                        checked_count = sum(
+                            1 for key in st.session_state.checked_flights
+                            if st.session_state.checked_flights[key] and key in status_df['flight'].values
+                        )
+                        total_count = len(status_df)
+                        st.metric(
+                            f"Проверено рейсов ({status})", 
+                            f"{checked_count} из {total_count}",
+                            delta=f"{checked_count/total_count*100:.1f}%" if total_count > 0 else "0%"
+                        )
+
+        # ----------------------- EXPORT TO EXCEL -----------------------
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            # Для Excel форматируем числа правильно и убираем NaN
+            result_to_export = result.copy()
+            # ✅ Изменено: формат даты на ДД.ММ.ГГГГ в экспорте
+            result_to_export['flight_date'] = result_to_export['flight_date'].dt.strftime('%d.%m.%Y')
+            result_to_export['daily_needed'] = result_to_export['daily_needed'].fillna(0).round(1)
+            result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].fillna(0).round(1)
+            result_to_export['sold_yesterday'] = result_to_export['sold_yesterday'].fillna(0).round(1)
+            result_to_export['load_factor'] = result_to_export['load_factor_num'].fillna(0).round(1)
+            result_to_export = result_to_export.drop('load_factor_num', axis=1)
+            result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
+            
+        st.download_button(
+            label="💾 Скачать полный отчёт в Excel",
+            data=output.getvalue(),
+            file_name=f"sales_speed_analysis_{today.strftime('%d.%m.%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
         st.error(f"❌ Ошибка при обработке файла: {str(e)}")
@@ -284,9 +420,3 @@ if uploaded_file:
 
 else:
     st.info("⬆️ Загрузите Excel файл, чтобы начать анализ.")
-    
-    # Показываем счетчик даже когда файл не загружен
-    update_user_activity()
-    active_users = st.session_state.get('active_users_count', 1)
-    st.sidebar.markdown("---")
-    st.sidebar.metric("👥 Использует сейчас", active_users)
