@@ -48,17 +48,18 @@ with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И
 
     ### 🎯 ЛОГИКА КЛАССИФИКАЦИИ СТАТУСОВ (в порядке приоритета):
 
-    1. **🟢 По плану** — если выполняется ЛЮБОЕ из условий:
-       - `daily_needed < 3`
+    1. **🔵 Перепродажа** — если выполняется ЛЮБОЕ из условий:
+       - `daily_needed < 3` и `diff_vs_plan > 10` (малый план + огромные продажи)
+       - `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday > daily_needed`
+       - `diff_vs_plan > max(5, 0.3 * daily_needed)`
+
+    2. **🟢 По плану** — если выполняется ЛЮБОЕ из условий:
+       - `daily_needed < 3` (малый план)
        - `sold_yesterday = 0` и `load_factor > 90%`
        - `|diff_vs_plan| <= max(5, 0.3 * daily_needed)`
 
-    2. **⚪ До рейса ещё далеко** — если:
+    3. **⚪ До рейса ещё далеко** — если:
        - `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday <= daily_needed`
-
-    3. **🔵 Перепродажа** — если:
-       - `diff_vs_plan > max(5, 0.3 * daily_needed)`
-       - **или** `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday > daily_needed`
 
     4. **🔴 Отстаём** — во всех остальных случаях значимого недовыполнения.
 
@@ -179,25 +180,42 @@ if uploaded_file:
         )
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # ---------- Classification ----------
+        # ---------- Classification (ОБНОВЛЕННАЯ ЛОГИКА) ----------
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
             diff = row['diff_vs_plan']
             load_factor = row['load_factor_num']
             sold_yesterday = row['sold_yesterday']
-
-            if daily_needed < 3:
-                return "🟢 По плану"
+            
+            # 1. СНАЧАЛА ПРОВЕРЯЕМ ПЕРЕПРОДАЖУ ДЛЯ МАЛЫХ PLANS (НОВОЕ УСЛОВИЕ!)
+            if daily_needed < 3 and diff > 10:  # если малый план, но ОГРОМНЫЕ продажи
+                return "🔵 Перепродажа"
+            
+            # 2. Полный рейс
             if sold_yesterday == 0 and load_factor > 90:
                 return "🟢 По плану"
-            if days_to_flight > 30 and daily_needed < 4:
-                return "🔵 Перепродажа" if sold_yesterday > daily_needed else "⚪ До рейса ещё далеко"
-            if diff > max(5, daily_needed * 0.3):
-                return "🔵 Перепродажа"
-            if abs(diff) <= max(5, daily_needed * 0.3):
+            
+            # 3. Малый план (но без гигантских продаж)
+            if daily_needed < 3:
                 return "🟢 По плану"
-            return "🔴 Отстаём"
+            
+            # 4. Далёкие рейсы
+            if days_to_flight > 30 and daily_needed < 4:
+                if sold_yesterday > daily_needed:
+                    return "🔵 Перепродажа"
+                else:
+                    return "⚪ До рейса ещё далеко"
+            
+            # 5. Основная классификация
+            elif diff > max(5, daily_needed * 0.3):
+                return "🔵 Перепродажа"
+            # Небольшое отклонение от плана
+            elif abs(diff) <= max(5, daily_needed * 0.3):
+                return "🟢 По плану"
+            # Значительное недовыполнение
+            else:
+                return "🔴 Отстаём"
 
         df['status'] = df.apply(classify, axis=1)
 
