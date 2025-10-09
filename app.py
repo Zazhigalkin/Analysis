@@ -293,7 +293,8 @@ if uploaded_file:
 
         # Приведём форматы к красивому виду в UI
         display_df = formatted_result.copy()
-        display_df['flight_date'] = display_df['flight_date'].dt.strftime('%Y-%m-%d')
+        # ✅ Изменено: формат даты на ДД.ММ.ГГГГ
+        display_df['flight_date'] = display_df['flight_date'].dt.strftime('%d.%m.%Y')
         display_df['daily_needed'] = display_df['daily_needed'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
         display_df['diff_vs_plan'] = display_df['diff_vs_plan'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
         display_df['sold_yesterday'] = display_df['sold_yesterday'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
@@ -336,10 +337,11 @@ if uploaded_file:
                                 )
                                 st.session_state.checked_flights[flight_key] = is_checked
                             with c2:
+                                # ✅ Изменено: формат даты на ДД.ММ.ГГГГ
                                 st.markdown(f"~~{row['flight']}~~ ✅" if is_checked else f"**{row['flight']}**")
                                 st.markdown(f"""
                                 - **Маршрут:** {row['route']}
-                                - **Дата вылета:** {row['flight_date'].strftime('%Y-%m-%d')}
+                                - **Дата вылета:** {row['flight_date'].strftime('%d.%m.%Y')}
                                 - **Продано вчера:** {row['sold_yesterday']:.1f} 
                                 - **Необходимый темп:** {row['daily_needed']:.1f}
                                 - **Отклонение:** {row['diff_vs_plan']:.1f}
@@ -359,7 +361,26 @@ if uploaded_file:
                             delta=f"{checked_count/total_count*100:.1f}%" if total_count > 0 else "0%"
                         )
 
-        
+        # ----------------------- EXPORT TO EXCEL -----------------------
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            # Для Excel форматируем числа правильно и убираем NaN
+            result_to_export = result.copy()
+            # ✅ Изменено: формат даты на ДД.ММ.ГГГГ в экспорте
+            result_to_export['flight_date'] = result_to_export['flight_date'].dt.strftime('%d.%m.%Y')
+            result_to_export['daily_needed'] = result_to_export['daily_needed'].fillna(0).round(1)
+            result_to_export['diff_vs_plan'] = result_to_export['diff_vs_plan'].fillna(0).round(1)
+            result_to_export['sold_yesterday'] = result_to_export['sold_yesterday'].fillna(0).round(1)
+            result_to_export['load_factor'] = result_to_export['load_factor_num'].fillna(0).round(1)
+            result_to_export = result_to_export.drop('load_factor_num', axis=1)
+            result_to_export.to_excel(writer, index=False, sheet_name='Sales_Speed')
+            
+        st.download_button(
+            label="💾 Скачать полный отчёт в Excel",
+            data=output.getvalue(),
+            file_name=f"sales_speed_analysis_{today.strftime('%d.%m.%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
         st.error(f"❌ Ошибка при обработке файла: {str(e)}")
