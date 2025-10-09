@@ -3,61 +3,10 @@ import pandas as pd
 from datetime import datetime
 import io
 import numpy as np
-import time
-
-# ----------------------- REAL-TIME USER TRACKING -----------------------
-def init_user_tracking():
-    """Инициализация отслеживания пользователей в реальном времени"""
-    if 'active_users' not in st.session_state:
-        st.session_state.active_users = {}
-    if 'user_last_activity' not in st.session_state:
-        st.session_state.user_last_activity = {}
-
-def get_user_session_id():
-    """Генерируем ID сессии для пользователя"""
-    if 'user_session_id' not in st.session_state:
-        st.session_state.user_session_id = f"session_{int(time.time())}_{np.random.randint(1000, 9999)}"
-    return st.session_state.user_session_id
-
-def update_user_activity():
-    """Обновляем активность пользователя"""
-    init_user_tracking()
-    session_id = get_user_session_id()
-    current_time = time.time()
-    
-    # Обновляем время активности текущего пользователя
-    st.session_state.user_last_activity[session_id] = current_time
-    
-    # Очищаем неактивных пользователей (неактивны более 5 минут)
-    timeout = 300  # 5 минут в секундах
-    active_users = {}
-    for user_id, last_active in st.session_state.user_last_activity.items():
-        if current_time - last_active < timeout:
-            active_users[user_id] = last_active
-    
-    st.session_state.user_last_activity = active_users
-    st.session_state.active_users_count = len(active_users)
 
 # ----------------------- PAGE CONFIG -----------------------
 st.set_page_config(page_title="Анализ темпов продаж", page_icon="📈", layout="wide")
-
-# Обновляем активность пользователя при каждой загрузке
-update_user_activity()
-
-# ----------------------- HEADER WITH USER COUNT -----------------------
-col1, col2, col3 = st.columns([3, 1, 1])
-with col1:
-    st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
-with col2:
-    # Красивое отображение текущих пользователей
-    active_users = st.session_state.get('active_users_count', 1)
-    st.metric(
-        "👥 Использует сейчас", 
-        f"{active_users} чел",
-        delta=None
-    )
-with col3:
-    st.metric("🕐 Время обновления", datetime.now().strftime('%H:%M'))
+st.title("📈 Анализ темпа продаж по рейсам с учётом сегодняшней даты")
 
 # ----------------------- HELPERS ---------------------------
 def clean_number(s: pd.Series) -> pd.Series:
@@ -80,6 +29,8 @@ def clean_percent(s: pd.Series) -> pd.Series:
          .str.replace(',','.', regex=False),
         errors='coerce'
     )
+    # Если среднее по столбцу похоже на долю (например 0.92), домножаем на 100.
+    # Порог 2 работает устойчиво и к редким аномалиям.
     if val.mean(skipna=True) < 2:
         val = val * 100
     return val
@@ -105,10 +56,12 @@ with st.expander("ℹ️ ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ И
     2. **🟢 По плану** — если выполняется ЛЮБОЕ из условий:
        - `daily_needed < 3` (малый план)
        - `sold_yesterday = 0` и `load_factor > 90%`
-       - `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday <= daily_needed` (было "далеко до рейса")
        - `|diff_vs_plan| <= max(5, 0.3 * daily_needed)`
 
-    3. **🔴 Отстаём** — во всех остальных случаях значимого недовыполнения.
+    3. **⚪ До рейса ещё далеко** — если:
+       - `days_to_flight > 30` и `daily_needed < 4` и `sold_yesterday <= daily_needed`
+
+    4. **🔴 Отстаём** — во всех остальных случаях значимого недовыполнения.
 
     ### 📊 РАСЧЁТНЫЕ ПОКАЗАТЕЛИ:
     - **days_to_flight** — дни до вылета (мин. 1)
@@ -141,9 +94,6 @@ uploaded_file = st.file_uploader("Загрузи Excel файл", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Обновляем активность при работе с файлом
-        update_user_activity()
-        
         df = pd.read_excel(uploaded_file, engine="openpyxl")
         if df.empty:
             st.error("❌ Файл пустой")
@@ -152,7 +102,7 @@ if uploaded_file:
         # ---------- Rename ----------
         df = df.rename(columns={
             'flt_date&num': 'flight',
-            'Ind SS': 'sold_total_raw',          
+            'Ind SS': 'sold_total_raw',          # как в файле (без блоков), дальше не используем в расчётах
             'Ind SS yesterday': 'sold_yesterday',
             'Cap': 'total_seats',
             'LF': 'load_factor',
@@ -189,10 +139,10 @@ if uploaded_file:
 
         # ---------- Clean numbers (vectorized) ----------
         df['total_seats']     = clean_number(df['total_seats'])
-        df['sold_total_raw']  = clean_number(df['sold_total_raw']).fillna(0)
+        df['sold_total_raw']  = clean_number(df['sold_total_raw']).fillna(0)  # инфо-колонка, в расчётах не используется
         df['sold_yesterday']  = clean_number(df['sold_yesterday']).fillna(0)
-        df['av_seats']        = clean_number(df['Av seats'])
-        df['load_factor_num'] = clean_percent(df['load_factor']).fillna(0)
+        df['av_seats']        = clean_number(df['Av seats'])  # оставляем NaN для контроля
+        df['load_factor_num'] = clean_percent(df['load_factor']).fillna(0)   # ✅ всегда 0..100
 
         # ---------- Require Av seats ----------
         if df['av_seats'].isna().any():
@@ -217,7 +167,9 @@ if uploaded_file:
             st.stop()
 
         # ---------- NEW sold_total & remaining ----------
+        # sold_total включает жёсткие блоки: Cap - Av seats
         df['sold_total']      = (df['total_seats'] - df['av_seats']).clip(lower=0)
+        # остаток мест равен Av seats
         df['remaining_seats'] = df['av_seats'].clip(lower=0)
 
         # ---------- Daily plan & diffs ----------
@@ -228,7 +180,7 @@ if uploaded_file:
         )
         df['diff_vs_plan'] = df['sold_yesterday'] - df['daily_needed']
 
-        # ---------- Classification (УПРОЩЕННАЯ ЛОГИКА - БЕЗ "ДАЛЕКО ДО РЕЙСА") ----------
+        # ---------- Classification (ОБНОВЛЕННАЯ ЛОГИКА) ----------
         def classify(row):
             days_to_flight = row['days_to_flight']
             daily_needed = row['daily_needed']
@@ -236,25 +188,32 @@ if uploaded_file:
             load_factor = row['load_factor_num']
             sold_yesterday = row['sold_yesterday']
             
-            if daily_needed < 3 and diff > 10:
+            # 1. СНАЧАЛА ПРОВЕРЯЕМ ПЕРЕПРОДАЖУ ДЛЯ МАЛЫХ PLANS (НОВОЕ УСЛОВИЕ!)
+            if daily_needed < 3 and diff > 10:  # если малый план, но ОГРОМНЫЕ продажи
                 return "🔵 Перепродажа"
             
+            # 2. Полный рейс
             if sold_yesterday == 0 and load_factor > 90:
                 return "🟢 По плану"
             
+            # 3. Малый план (но без гигантских продаж)
             if daily_needed < 3:
                 return "🟢 По плану"
             
+            # 4. Далёкие рейсы
             if days_to_flight > 30 and daily_needed < 4:
                 if sold_yesterday > daily_needed:
                     return "🔵 Перепродажа"
                 else:
-                    return "🟢 По плану"
+                    return "⚪ До рейса ещё далеко"
             
-            if diff > max(5, daily_needed * 0.3):
+            # 5. Основная классификация
+            elif diff > max(5, daily_needed * 0.3):
                 return "🔵 Перепродажа"
+            # Небольшое отклонение от плана
             elif abs(diff) <= max(5, daily_needed * 0.3):
                 return "🟢 По плану"
+            # Значительное недовыполнение
             else:
                 return "🔴 Отстаём"
 
@@ -278,22 +237,18 @@ if uploaded_file:
         result['remaining_seats']  = result['remaining_seats'].fillna(0).round(0).astype(int)
 
         # ----------------------- SUMMARY HEADER -----------------------
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2 = st.columns([3, 1])
         with col1:
             st.subheader("📊 Результаты анализа темпа продаж")
         with col2:
             status_counts = result['status'].value_counts()
             st.metric("Всего рейсов", len(result))
-        with col3:
-            # Обновляем счетчик при отображении результатов
-            update_user_activity()
-            active_users = st.session_state.get('active_users_count', 1)
-            st.metric("👥 Активных пользователей", active_users)
 
         status_colors = {
             "🔵 Перепродажа": "#1f77b4",
             "🟢 По плану": "#2ca02c",
-            "🔴 Отстаём": "#d62728"
+            "🔴 Отстаём": "#d62728",
+            "⚪ До рейса ещё далеко": "#7f7f7f"
         }
         cols = st.columns(len(status_counts))
         for i, (status, count) in enumerate(status_counts.items()):
@@ -341,6 +296,8 @@ if uploaded_file:
                 return ['background-color: #ffcccc'] * len(row)
             elif row['status'] == '🔵 Перепродажа':
                 return ['background-color: #ccffcc'] * len(row)
+            elif row['status'] == '⚪ До рейса ещё далеко':
+                return ['background-color: #f0f0f0'] * len(row)
             else:
                 return [''] * len(row)
 
@@ -463,9 +420,3 @@ if uploaded_file:
 
 else:
     st.info("⬆️ Загрузите Excel файл, чтобы начать анализ.")
-    
-    # Показываем счетчик даже когда файл не загружен
-    update_user_activity()
-    active_users = st.session_state.get('active_users_count', 1)
-    st.sidebar.markdown("---")
-    st.sidebar.metric("👥 Использует сейчас", active_users)
