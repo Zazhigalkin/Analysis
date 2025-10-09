@@ -337,8 +337,20 @@ if uploaded_file:
                                 )
                                 st.session_state.checked_flights[flight_key] = is_checked
                             with c2:
-                                # ✅ Изменено: формат даты на ДД.ММ.ГГГГ
-                                st.markdown(f"~~{row['flight']}~~ ✅" if is_checked else f"**{row['flight']}**")
+                                # ✅ Изменено: формат даты в названии рейса на ДД.ММ.ГГГГ
+                                flight_parts = row['flight'].split(' - ', 2)
+                                if len(flight_parts) >= 3:
+                                    # Преобразуем первую часть (дату) в нужный формат
+                                    try:
+                                        original_date = datetime.strptime(flight_parts[0], '%Y.%m.%d')
+                                        formatted_date = original_date.strftime('%d.%m.%Y')
+                                        formatted_flight = f"{formatted_date} - {flight_parts[1]} - {flight_parts[2]}"
+                                    except:
+                                        formatted_flight = row['flight']
+                                else:
+                                    formatted_flight = row['flight']
+                                
+                                st.markdown(f"~~{formatted_flight}~~ ✅" if is_checked else f"**{formatted_flight}**")
                                 st.markdown(f"""
                                 - **Маршрут:** {row['route']}
                                 - **Дата вылета:** {row['flight_date'].strftime('%d.%m.%Y')}
